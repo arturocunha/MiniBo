@@ -5,7 +5,6 @@ function App() {
   // =========================================================================
   // ⚙️ MATRIZ DE CALIBRAÇÃO INDEPENDENTE DOS MOTORES (Mude para 1 ou -1)
   // =========================================================================
-  // Se alguma roda estiver girando ao contrário, altere APENAS o sinal dela aqui!
   const MULT_FFE = 1; // Frente-Frente-Esquerda (Pino 5)
   const MULT_FFD = 1; // Frente-Frente-Direita  (Pino 6)
   const MULT_FTE = 1; // Frente-Trás-Esquerda   (Pino 7)
@@ -33,11 +32,10 @@ function App() {
   const recognitionRef = useRef<any>(null); 
   const ouvindoRef = useRef(false); 
   
-  // Memória estável dos motores: [FFE, FFD, FTE, FTD]
   const estadoMotores = useRef<[number, number, number, number]>([0, 0, 0, 0]);
 
   // =========================================================================
-  // 1. LIGAÇÃO WEBSOCKET E TRANSMISSÃO CONTÍNUA CRONOMETRADA (HEARTBEAT)
+  // 1. LIGAÇÃO WEBSOCKET E TRANSMISSÃO CONTÍNUA CRONOMETRADA
   // =========================================================================
   useEffect(() => {
     const protocoloWs = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -48,7 +46,6 @@ function App() {
     ws.current.onclose = () => setStatusWs('Desligado 🔴');
     ws.current.onerror = () => setStatusWs('Erro na ligação ⚠️');
 
-    // Metralha o estado atual para a ESP32 10 vezes por segundo
     const transmissor = setInterval(() => {
       if (ws.current && ws.current.readyState === WebSocket.OPEN) {
         const [ffe, ffd, fte, ftd] = estadoMotores.current;
@@ -71,7 +68,7 @@ function App() {
   }, [MULT_FFE, MULT_FFD, MULT_FTE, MULT_FTD]);
 
   // =========================================================================
-  // 2. COMANDO DE VOZ PROFILTRADO
+  // 2. COMANDO DE VOZ (LÓGICA REGEX BLINDADA)
   // =========================================================================
   useEffect(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -80,7 +77,6 @@ function App() {
       recognitionRef.current = new SpeechRecognition();
       recognitionRef.current.lang = 'pt-BR'; 
       recognitionRef.current.continuous = true; 
-      // Desativado para focar estritamente na frase final dita
       recognitionRef.current.interimResults = false; 
 
       recognitionRef.current.onresult = (event: any) => {
@@ -91,24 +87,25 @@ function App() {
         const fala = event.results[lastIndex][0].transcript.toLowerCase().trim();
         setFraseOuvida(fala);
         
-        // A MÁGICA DO ELSE IF: Garante que um comando não atropele o outro
-        if (fala.includes("frente") || fala.includes("avançar") || fala.includes("vai")) { 
+        // A MÁGICA DO \b: Obriga a procurar a palavra exata, isolada por espaços.
+        // Assim, o "re" de "direita" ou "frente" nunca mais vai ativar a marcha ré.
+        if (/\b(frente|avançar|vai)\b/.test(fala)) { 
           setComandoAtualVoz("FRENTE");
           estadoMotores.current = [100, 100, 100, 100]; 
         } 
-        else if (fala.includes("trás") || fala.includes("tras") || fala.includes("ré") || fala.includes("re") || fala.includes("recuar")) { 
-          setComandoAtualVoz("TRÁS");
-          estadoMotores.current = [-100, -100, -100, -100]; 
-        } 
-        else if (fala.includes("esquerda") || fala.includes("left")) { 
+        else if (/\b(esquerda|left)\b/.test(fala)) { 
           setComandoAtualVoz("ESQUERDA");
           estadoMotores.current = [-100, 100, -100, 100]; 
         } 
-        else if (fala.includes("direita") || fala.includes("right")) { 
+        else if (/\b(direita|right)\b/.test(fala)) { 
           setComandoAtualVoz("DIREITA");
           estadoMotores.current = [100, -100, 100, -100]; 
         } 
-        else if (fala.includes("para") || fala.includes("pare") || fala.includes("parar") || fala.includes("stop")) { 
+        else if (/\b(trás|tras|ré|re|recuar)\b/.test(fala)) { 
+          setComandoAtualVoz("TRÁS");
+          estadoMotores.current = [-100, -100, -100, -100]; 
+        } 
+        else if (/\b(para|pare|parar|stop)\b/.test(fala)) { 
           setComandoAtualVoz("PARADO");
           estadoMotores.current = [0, 0, 0, 0]; 
         }
