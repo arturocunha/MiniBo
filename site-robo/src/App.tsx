@@ -2,14 +2,6 @@ import { useState, useEffect, useRef } from 'react';
 import './App.css';
 
 function App() {
-  // =========================================================================
-  // ⚙️ ZONA DE CONFIGURAÇÃO RÁPIDA DE MOTORES
-  // =========================================================================
-  // Se o robô for para trás quando você disser "Frente", mude de 1 para -1.
-  // Como você relatou que o robô inverteu, já deixei ambos como -1.
-  const INVERTER_ESQ = -1; 
-  const INVERTER_DIR = -1;
-
   const [abaAtiva, setAbaAtiva] = useState<'voz' | 'visao'>('voz');
   const [statusWs, setStatusWs] = useState('A ligar...');
   
@@ -32,11 +24,11 @@ function App() {
   const recognitionRef = useRef<any>(null); 
   const ouvindoRef = useRef(false); 
   
-  // Memória contínua do estado dos motores (A Mágica do Loop)
-  const motoresRef = useRef({ e: 0, d: 0 });
+  const ultimoComandoRef = useRef('0,0,0,0'); 
+  const ultimaMensagemRef = useRef<number>(0); // Trava de Flood (Inundação)
 
   // =========================================================================
-  // 1. LIGAÇÃO WEBSOCKET E LOOP CONTÍNUO (HEARTBEAT)
+  // 1. LIGAÇÃO WEBSOCKET
   // =========================================================================
   useEffect(() => {
     const protocoloWs = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -47,28 +39,30 @@ function App() {
     ws.current.onclose = () => setStatusWs('Desligado 🔴');
     ws.current.onerror = () => setStatusWs('Erro na ligação ⚠️');
 
-    // Dispara a cada 100ms (10 vezes por segundo) mantendo o robô em movimento contínuo
-    const loopControle = setInterval(() => {
-      if (ws.current && ws.current.readyState === WebSocket.OPEN) {
-        const { e, d } = motoresRef.current;
-        
-        // Aplica a inversão caso os motores estejam fisicamente invertidos
-        const pwmE = e * INVERTER_ESQ;
-        const pwmD = d * INVERTER_DIR;
-
-        const stringCmd = `${pwmE},${pwmD},${pwmE},${pwmD}`;
-        ws.current.send(stringCmd);
-      }
-    }, 100);
-
-    return () => {
-      clearInterval(loopControle);
-      ws.current?.close();
-    };
+    return () => ws.current?.close();
   }, []);
 
+  const enviarComandoMixado = (vel_esq: number, vel_dir: number) => {
+    const pwm_e = Math.round(vel_esq);
+    const pwm_d = Math.round(vel_dir);
+    const novaStringComando = `${pwm_e},${pwm_d},${pwm_e},${pwm_d}`;
+
+    const agora = Date.now();
+
+    if (ws.current && ws.current.readyState === WebSocket.OPEN && novaStringComando !== ultimoComandoRef.current) {
+      // Evita o travamento do servidor enviando comandos a no máximo 10 vezes por segundo (100ms)
+      // Comandos de PARAR (0,0) furam a fila para garantir segurança imediata
+      if (novaStringComando === '0,0,0,0' || agora - ultimaMensagemRef.current > 100) {
+        ultimoComandoRef.current = novaStringComando;
+        ultimaMensagemRef.current = agora;
+        ws.current.send(novaStringComando);
+        console.log(`📡 WebSocket: ${novaStringComando}`);
+      }
+    }
+  };
+
   // =========================================================================
-  // 2. COMANDO DE VOZ (Com Sinônimos)
+  // 2. COMANDO DE VOZ (Velocidade ajustada para 100%)
   // =========================================================================
   useEffect(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -89,27 +83,26 @@ function App() {
         let motorE = 0, motorD = 0;
         let encontrouComando = false;
 
-        // Adicionado dicionário de sinônimos para melhorar o reconhecimento
-        if (fala.includes("frente") || fala.includes("avançar") || fala.includes("vai") || fala.includes("go")) { 
+        if (fala.includes("frente") || fala.includes("forward") || fala.includes("go")) { 
           novoComando = "FRENTE"; motorE = 100; motorD = 100; encontrouComando = true; 
         } 
-        else if (fala.includes("trás") || fala.includes("tras") || fala.includes("ré") || fala.includes("re") || fala.includes("recuar") || fala.includes("voltar")) { 
+        if (fala.includes("trás") || fala.includes("tras") || fala.includes("back") || fala.includes("ré") || fala.includes("re")) { 
           novoComando = "TRÁS"; motorE = -100; motorD = -100; encontrouComando = true; 
         } 
-        else if (fala.includes("esquerda") || fala.includes("left")) { 
+        if (fala.includes("esquerda") || fala.includes("left")) { 
           novoComando = "ESQUERDA"; motorE = -100; motorD = 100; encontrouComando = true; 
         } 
-        else if (fala.includes("direita") || fala.includes("right")) { 
+        if (fala.includes("direita") || fala.includes("right")) { 
           novoComando = "DIREITA"; motorE = 100; motorD = -100; encontrouComando = true; 
         } 
-        else if (fala.includes("para") || fala.includes("pare") || fala.includes("parar") || fala.includes("stop")) { 
+        
+        if (fala.includes("para") || fala.includes("pare") || fala.includes("parar") || fala.includes("stop")) { 
           novoComando = "PARADO"; motorE = 0; motorD = 0; encontrouComando = true; 
         }
 
         if (encontrouComando) {
           setComandoAtualVoz(novoComando);
-          // Apenas atualiza a memória. O LoopControle se encarrega de enviar para a ESP32.
-          motoresRef.current = { e: motorE, d: motorD };
+          enviarComandoMixado(motorE, motorD);
         }
       };
 
@@ -123,7 +116,7 @@ function App() {
       ouvindoRef.current = false; 
       setOuvindoVoz(false); 
       recognitionRef.current.stop(); 
-      motoresRef.current = { e: 0, d: 0 }; 
+      enviarComandoMixado(0,0); 
       setComandoAtualVoz("PARADO"); 
       setFraseOuvida('');
     } else { 
@@ -134,7 +127,7 @@ function App() {
   };
 
   // =========================================================================
-  // 3. VISÃO COMPUTACIONAL
+  // 3. VISÃO COMPUTACIONAL (Lógica Joystick XYZ de Tela)
   // =========================================================================
   
   const processarFrame = async () => {
@@ -153,6 +146,7 @@ function App() {
     canvasCtx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
 
     if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+      // Usamos apenas a primeira mão que aparecer na tela
       const landmarks = results.multiHandLandmarks[0];
         
       const drawConnectors = (window as any).drawConnectors;
@@ -164,14 +158,20 @@ function App() {
          drawLandmarks(canvasCtx, landmarks, { color: '#FF0000', lineWidth: 1, radius: 4 });
       }
 
+      // Base central da mão
       const centroDaMao = landmarks[9]; 
-      const eixoX = centroDaMao.x - 0.5; 
-      const eixoY = centroDaMao.y - 0.5; 
 
+      // A tela vai de 0.0 a 1.0. O centro absoluto é 0.5.
+      // Calculamos a diferença entre onde a mão está e o centro da câmera
+      const eixoX = centroDaMao.x - 0.5; // Curva
+      const eixoY = centroDaMao.y - 0.5; // Velocidade
+
+      // O eixo Y na câmera é invertido (0 é o topo). Multiplicamos por -200
+      // para que a mão no topo (ex: eixoY = -0.4) resulte em +80% de velocidade pra frente.
       const forward_speed = Math.max(-100, Math.min(100, eixoY * -200));
       const turn_speed = Math.max(-100, Math.min(100, eixoX * -200));
 
-      const deadzone = 20; 
+      const deadzone = 20; // Tamanho do "quadrado invisível" no meio da tela onde o robô fica parado
       const speed_filtered = Math.abs(forward_speed) < deadzone ? 0 : forward_speed;
       const turn_filtered = Math.abs(turn_speed) < deadzone ? 0 : turn_speed;
 
@@ -185,11 +185,12 @@ function App() {
       }
 
       setInfoJoystick({ speed: Math.round(speed_filtered), turn: Math.round(turn_filtered), l: Math.round(motorEsq), r: Math.round(motorDir) });
-      motoresRef.current = { e: Math.round(motorEsq), d: Math.round(motorDir) };
+      enviarComandoMixado(motorEsq, motorDir);
       
     } else {
+      // Se não achar a mão, para na mesma hora
       setInfoJoystick({ speed: 0, turn: 0, l: 0, r: 0 });
-      motoresRef.current = { e: 0, d: 0 };
+      enviarComandoMixado(0, 0);
     }
   };
 
@@ -240,7 +241,7 @@ function App() {
     const ctx = canvasRef.current?.getContext('2d');
     if (ctx && canvasRef.current) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
 
-    motoresRef.current = { e: 0, d: 0 }; 
+    if (ws.current) enviarComandoMixado(0,0); 
 
     setCameraLigada(false);
     setInfoJoystick({ speed: 0, turn: 0, l: 0, r: 0 });
@@ -269,7 +270,7 @@ function App() {
       {abaAtiva === 'voz' && (
         <div style={{ marginTop: '30px' }}>
           <h2>Diga para onde o MiniBo deve ir</h2>
-          <p>Palavras-chave: <strong>Frente, Avançar, Trás, Ré, Esquerda, Direita, Para</strong></p>
+          <p>Palavras-chave: <strong>Frente, Trás, Ré, Esquerda, Direita, Para</strong></p>
           <button onClick={alternarMicrofone} style={{ padding: '20px 40px', fontSize: '20px', color: 'white', border: 'none', borderRadius: '10px', cursor: 'pointer', marginTop: '10px', backgroundColor: ouvindoVoz ? '#dc3545' : '#28a745' }}>{ouvindoVoz ? '🛑 Parar de Ouvir' : '🎙️ Começar a Ouvir'}</button>
           
           <div style={{ marginTop: '30px', minHeight: '40px' }}>
@@ -311,6 +312,7 @@ function App() {
               </div>
             )}
             
+            {/* Desenha uma mira invisível no centro da tela para ajudar na referência visual */}
             {cameraLigada && (
               <div style={{ position: 'absolute', top: '50%', left: '50%', width: '10px', height: '10px', backgroundColor: 'red', borderRadius: '50%', transform: 'translate(-50%, -50%)', opacity: 0.5, zIndex: 15 }} />
             )}
