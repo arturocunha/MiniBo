@@ -2,6 +2,15 @@ import { useState, useEffect, useRef } from 'react';
 import './App.css';
 
 function App() {
+  // =========================================================================
+  // ⚙️ MATRIZ DE CALIBRAÇÃO INDEPENDENTE DOS MOTORES (Mude para 1 ou -1)
+  // =========================================================================
+  // Se alguma roda estiver girando ao contrário, altere APENAS o sinal dela aqui!
+  const MULT_FFE = 1; // Frente-Frente-Esquerda (Pino 5)
+  const MULT_FFD = 1; // Frente-Frente-Direita  (Pino 6)
+  const MULT_FTE = 1; // Frente-Trás-Esquerda   (Pino 7)
+  const MULT_FTD = 1; // Frente-Trás-Direita    (Pino 8)
+
   const [abaAtiva, setAbaAtiva] = useState<'voz' | 'visao'>('voz');
   const [statusWs, setStatusWs] = useState('A ligar...');
   
@@ -24,11 +33,11 @@ function App() {
   const recognitionRef = useRef<any>(null); 
   const ouvindoRef = useRef(false); 
   
-  const ultimoComandoRef = useRef('0,0,0,0'); 
-  const ultimaMensagemRef = useRef<number>(0); // Trava de Flood (Inundação)
+  // Memória estável dos motores: [FFE, FFD, FTE, FTD]
+  const estadoMotores = useRef<[number, number, number, number]>([0, 0, 0, 0]);
 
   // =========================================================================
-  // 1. LIGAÇÃO WEBSOCKET
+  // 1. LIGAÇÃO WEBSOCKET E TRANSMISSÃO CONTÍNUA CRONOMETRADA (HEARTBEAT)
   // =========================================================================
   useEffect(() => {
     const protocoloWs = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -39,30 +48,30 @@ function App() {
     ws.current.onclose = () => setStatusWs('Desligado 🔴');
     ws.current.onerror = () => setStatusWs('Erro na ligação ⚠️');
 
-    return () => ws.current?.close();
-  }, []);
+    // Metralha o estado atual para a ESP32 10 vezes por segundo
+    const transmissor = setInterval(() => {
+      if (ws.current && ws.current.readyState === WebSocket.OPEN) {
+        const [ffe, ffd, fte, ftd] = estadoMotores.current;
+        
+        const cmdFinal = [
+          ffe * MULT_FFE,
+          ffd * MULT_FFD,
+          fte * MULT_FTE,
+          ftd * MULT_FTD
+        ].join(',');
 
-  const enviarComandoMixado = (vel_esq: number, vel_dir: number) => {
-    const pwm_e = Math.round(vel_esq);
-    const pwm_d = Math.round(vel_dir);
-    const novaStringComando = `${pwm_e},${pwm_d},${pwm_e},${pwm_d}`;
-
-    const agora = Date.now();
-
-    if (ws.current && ws.current.readyState === WebSocket.OPEN && novaStringComando !== ultimoComandoRef.current) {
-      // Evita o travamento do servidor enviando comandos a no máximo 10 vezes por segundo (100ms)
-      // Comandos de PARAR (0,0) furam a fila para garantir segurança imediata
-      if (novaStringComando === '0,0,0,0' || agora - ultimaMensagemRef.current > 100) {
-        ultimoComandoRef.current = novaStringComando;
-        ultimaMensagemRef.current = agora;
-        ws.current.send(novaStringComando);
-        console.log(`📡 WebSocket: ${novaStringComando}`);
+        ws.current.send(cmdFinal);
       }
-    }
-  };
+    }, 100);
+
+    return () => {
+      clearInterval(transmissor);
+      ws.current?.close();
+    };
+  }, [MULT_FFE, MULT_FFD, MULT_FTE, MULT_FTD]);
 
   // =========================================================================
-  // 2. COMANDO DE VOZ (Velocidade ajustada para 100%)
+  // 2. COMANDO DE VOZ PROFILTRADO
   // =========================================================================
   useEffect(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -71,38 +80,37 @@ function App() {
       recognitionRef.current = new SpeechRecognition();
       recognitionRef.current.lang = 'pt-BR'; 
       recognitionRef.current.continuous = true; 
-      recognitionRef.current.interimResults = true; 
+      // Desativado para focar estritamente na frase final dita
+      recognitionRef.current.interimResults = false; 
 
       recognitionRef.current.onresult = (event: any) => {
         const lastIndex = event.results.length - 1;
-        const fala = event.results[lastIndex][0].transcript.toLowerCase().trim();
         
+        if (!event.results[lastIndex].isFinal) return;
+
+        const fala = event.results[lastIndex][0].transcript.toLowerCase().trim();
         setFraseOuvida(fala);
         
-        let novoComando = ""; 
-        let motorE = 0, motorD = 0;
-        let encontrouComando = false;
-
-        if (fala.includes("frente") || fala.includes("forward") || fala.includes("go")) { 
-          novoComando = "FRENTE"; motorE = 100; motorD = 100; encontrouComando = true; 
+        // A MÁGICA DO ELSE IF: Garante que um comando não atropele o outro
+        if (fala.includes("frente") || fala.includes("avançar") || fala.includes("vai")) { 
+          setComandoAtualVoz("FRENTE");
+          estadoMotores.current = [100, 100, 100, 100]; 
         } 
-        if (fala.includes("trás") || fala.includes("tras") || fala.includes("back") || fala.includes("ré") || fala.includes("re")) { 
-          novoComando = "TRÁS"; motorE = -100; motorD = -100; encontrouComando = true; 
+        else if (fala.includes("trás") || fala.includes("tras") || fala.includes("ré") || fala.includes("re") || fala.includes("recuar")) { 
+          setComandoAtualVoz("TRÁS");
+          estadoMotores.current = [-100, -100, -100, -100]; 
         } 
-        if (fala.includes("esquerda") || fala.includes("left")) { 
-          novoComando = "ESQUERDA"; motorE = -100; motorD = 100; encontrouComando = true; 
+        else if (fala.includes("esquerda") || fala.includes("left")) { 
+          setComandoAtualVoz("ESQUERDA");
+          estadoMotores.current = [-100, 100, -100, 100]; 
         } 
-        if (fala.includes("direita") || fala.includes("right")) { 
-          novoComando = "DIREITA"; motorE = 100; motorD = -100; encontrouComando = true; 
+        else if (fala.includes("direita") || fala.includes("right")) { 
+          setComandoAtualVoz("DIREITA");
+          estadoMotores.current = [100, -100, 100, -100]; 
         } 
-        
-        if (fala.includes("para") || fala.includes("pare") || fala.includes("parar") || fala.includes("stop")) { 
-          novoComando = "PARADO"; motorE = 0; motorD = 0; encontrouComando = true; 
-        }
-
-        if (encontrouComando) {
-          setComandoAtualVoz(novoComando);
-          enviarComandoMixado(motorE, motorD);
+        else if (fala.includes("para") || fala.includes("pare") || fala.includes("parar") || fala.includes("stop")) { 
+          setComandoAtualVoz("PARADO");
+          estadoMotores.current = [0, 0, 0, 0]; 
         }
       };
 
@@ -116,7 +124,7 @@ function App() {
       ouvindoRef.current = false; 
       setOuvindoVoz(false); 
       recognitionRef.current.stop(); 
-      enviarComandoMixado(0,0); 
+      estadoMotores.current = [0, 0, 0, 0];
       setComandoAtualVoz("PARADO"); 
       setFraseOuvida('');
     } else { 
@@ -127,9 +135,8 @@ function App() {
   };
 
   // =========================================================================
-  // 3. VISÃO COMPUTACIONAL (Lógica Joystick XYZ de Tela)
+  // 3. VISÃO COMPUTACIONAL (Joystick Absoluto)
   // =========================================================================
-  
   const processarFrame = async () => {
     if (visaoAtivaRef.current && videoRef.current && handsRef.current) {
       await handsRef.current.send({ image: videoRef.current });
@@ -146,7 +153,6 @@ function App() {
     canvasCtx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
 
     if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-      // Usamos apenas a primeira mão que aparecer na tela
       const landmarks = results.multiHandLandmarks[0];
         
       const drawConnectors = (window as any).drawConnectors;
@@ -158,20 +164,14 @@ function App() {
          drawLandmarks(canvasCtx, landmarks, { color: '#FF0000', lineWidth: 1, radius: 4 });
       }
 
-      // Base central da mão
       const centroDaMao = landmarks[9]; 
+      const eixoX = centroDaMao.x - 0.5; 
+      const eixoY = centroDaMao.y - 0.5; 
 
-      // A tela vai de 0.0 a 1.0. O centro absoluto é 0.5.
-      // Calculamos a diferença entre onde a mão está e o centro da câmera
-      const eixoX = centroDaMao.x - 0.5; // Curva
-      const eixoY = centroDaMao.y - 0.5; // Velocidade
-
-      // O eixo Y na câmera é invertido (0 é o topo). Multiplicamos por -200
-      // para que a mão no topo (ex: eixoY = -0.4) resulte em +80% de velocidade pra frente.
       const forward_speed = Math.max(-100, Math.min(100, eixoY * -200));
-      const turn_speed = Math.max(-100, Math.min(100, eixoX * -200));
+      const turn_speed = Math.max(-100, Math.min(100, eixoX * 200));
 
-      const deadzone = 20; // Tamanho do "quadrado invisível" no meio da tela onde o robô fica parado
+      const deadzone = 20; 
       const speed_filtered = Math.abs(forward_speed) < deadzone ? 0 : forward_speed;
       const turn_filtered = Math.abs(turn_speed) < deadzone ? 0 : turn_speed;
 
@@ -185,20 +185,24 @@ function App() {
       }
 
       setInfoJoystick({ speed: Math.round(speed_filtered), turn: Math.round(turn_filtered), l: Math.round(motorEsq), r: Math.round(motorDir) });
-      enviarComandoMixado(motorEsq, motorDir);
+      
+      estadoMotores.current = [
+        Math.round(motorEsq), 
+        Math.round(motorDir), 
+        Math.round(motorEsq), 
+        Math.round(motorDir)
+      ];
       
     } else {
-      // Se não achar a mão, para na mesma hora
       setInfoJoystick({ speed: 0, turn: 0, l: 0, r: 0 });
-      enviarComandoMixado(0, 0);
+      estadoMotores.current = [0, 0, 0, 0];
     }
   };
 
   const iniciarVision = async () => {
     if (!videoRef.current || !canvasRef.current) return;
-
     const Hands = (window as any).Hands;
-    if (!Hands) return alert("A aguardar as bibliotecas de IA do Google. Tente em 2 segundos.");
+    if (!Hands) return alert("A aguardar bibliotecas IA...");
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
@@ -210,10 +214,7 @@ function App() {
           locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
         });
         handsRef.current.setOptions({
-          maxNumHands: 1,
-          modelComplexity: 1,
-          minDetectionConfidence: 0.7,
-          minTrackingConfidence: 0.7
+          maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7
         });
         handsRef.current.onResults(onResultsHand);
       }
@@ -224,25 +225,17 @@ function App() {
         setCameraLigada(true);
         processarFrame(); 
       };
-
     } catch (erro) {
-      console.error("Erro na visão:", erro);
-      alert("Não foi possível aceder à câmara.");
+      alert("Erro na câmera.");
     }
   };
 
   const desligarVision = () => {
     visaoAtivaRef.current = false;
     cancelAnimationFrame(loopVisaoRef.current); 
-
     if (streamRef.current) streamRef.current.getTracks().forEach(track => track.stop());
     if (videoRef.current) videoRef.current.srcObject = null;
-    
-    const ctx = canvasRef.current?.getContext('2d');
-    if (ctx && canvasRef.current) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-
-    if (ws.current) enviarComandoMixado(0,0); 
-
+    estadoMotores.current = [0, 0, 0, 0]; 
     setCameraLigada(false);
     setInfoJoystick({ speed: 0, turn: 0, l: 0, r: 0 });
   };
@@ -252,9 +245,6 @@ function App() {
     if (abaAtiva !== 'voz' && ouvindoVoz) alternarMicrofone();
   }, [abaAtiva]);
 
-  // =========================================================================
-  // INTERFACE
-  // =========================================================================
   return (
     <div style={{ fontFamily: 'Arial', padding: '20px', textAlign: 'center', backgroundColor: '#1e1e1e', color: 'white', minHeight: '100vh' }}>
       <h1>Painel de Controle do MiniBo</h1>
@@ -269,9 +259,9 @@ function App() {
 
       {abaAtiva === 'voz' && (
         <div style={{ marginTop: '30px' }}>
-          <h2>Diga para onde o MiniBo deve ir</h2>
-          <p>Palavras-chave: <strong>Frente, Trás, Ré, Esquerda, Direita, Para</strong></p>
-          <button onClick={alternarMicrofone} style={{ padding: '20px 40px', fontSize: '20px', color: 'white', border: 'none', borderRadius: '10px', cursor: 'pointer', marginTop: '10px', backgroundColor: ouvindoVoz ? '#dc3545' : '#28a745' }}>{ouvindoVoz ? '🛑 Parar de Ouvir' : '🎙️ Começar a Ouvir'}</button>
+          <h2>Controle por Comando de Voz Estável</h2>
+          <p>Diga de forma clara: <strong>Frente, Trás, Esquerda, Direita, Parar</strong></p>
+          <button onClick={alternarMicrofone} style={{ padding: '20px 40px', fontSize: '20px', color: 'white', border: 'none', borderRadius: '10px', cursor: 'pointer', marginTop: '10px', backgroundColor: ouvindoVoz ? '#dc3545' : '#28a745' }}>{ouvindoVoz ? '🛑 Parar Ouvinte' : '🎙️ Ativar Ouvinte'}</button>
           
           <div style={{ marginTop: '30px', minHeight: '40px' }}>
              <p style={{ color: '#aaa', margin: 0 }}>O navegador ouviu:</p>
@@ -281,7 +271,7 @@ function App() {
           </div>
 
           <div style={{ marginTop: '20px', padding: '20px', backgroundColor: '#333', borderRadius: '10px', display: 'inline-block', minWidth: '300px' }}>
-            <p style={{ margin: 0, fontSize: '18px', color: '#aaa' }}>Estado da Voz:</p>
+            <p style={{ margin: 0, fontSize: '18px', color: '#aaa' }}>Estado Atual Trancado:</p>
             <p style={{ margin: '10px 0 0 0', fontSize: '36px', fontWeight: 'bold', color: comandoAtualVoz === 'PARADO' ? '#dc3545' : '#17a2b8' }}>{comandoAtualVoz}</p>
           </div>
         </div>
@@ -289,19 +279,13 @@ function App() {
 
       {abaAtiva === 'visao' && (
         <div style={{ marginTop: '30px' }}>
-          <h2>Pilote o MiniBo arrastando a Mão pela tela</h2>
-          <p style={{ color: '#aaa' }}>Mão no Topo: Frente | Rodapé: Ré | Lados: Curva | Centro: Parar</p>
-          
-          <button onClick={cameraLigada ? desligarVision : iniciarVision} style={{ padding: '15px 30px', fontSize: '16px', backgroundColor: cameraLigada ? '#dc3545' : '#17a2b8', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', marginBottom: '20px' }}>{cameraLigada ? '❌ Desligar Piloto Automático' : '🤖 Ativar Piloto Automático'}</button>
-
+          <h2>Pilote Arrastando a Mão pela Tela</h2>
+          <p style={{ color: '#aaa' }}>Topo: Frente | Rodapé: Ré | Laterais: Curva Pivotada</p>
+          <button onClick={cameraLigada ? desligarVision : iniciarVision} style={{ padding: '15px 30px', fontSize: '16px', backgroundColor: cameraLigada ? '#dc3545' : '#17a2b8', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', marginBottom: '20px' }}>{cameraLigada ? '❌ Desligar Câmera' : '🤖 Ligar Câmera'}</button>
           <br />
-          
           <div style={{ position: 'relative', width: '640px', height: '480px', margin: '0 auto', border: cameraLigada ? '3px solid #28a745' : '3px solid #555', borderRadius: '10px', backgroundColor: '#000', overflow: 'hidden' }}>
-            
             <video ref={videoRef} playsInline style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }} />
-            
             <canvas ref={canvasRef} width="640" height="480" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 10, transform: 'scaleX(-1)' }} />
-            
             {cameraLigada && (
               <div style={{ position: 'absolute', bottom: '20px', left: '20px', backgroundColor: 'rgba(0,0,0,0.7)', padding: '10px', borderRadius: '5px', textAlign: 'left', fontSize: '14px', color: '#0f0', zIndex: 20 }}>
                 <p style={{ margin: 0 }}>Velocidade: {infoJoystick.speed}%</p>
@@ -311,15 +295,12 @@ function App() {
                 <p style={{ margin: 0 }}>Motor Dir: {infoJoystick.r}</p>
               </div>
             )}
-            
-            {/* Desenha uma mira invisível no centro da tela para ajudar na referência visual */}
             {cameraLigada && (
-              <div style={{ position: 'absolute', top: '50%', left: '50%', width: '10px', height: '10px', backgroundColor: 'red', borderRadius: '50%', transform: 'translate(-50%, -50%)', opacity: 0.5, zIndex: 15 }} />
+              <div style={{ position: 'absolute', top: '50%', left: '50%', width: '12px', height: '12px', backgroundColor: 'red', borderRadius: '50%', transform: 'translate(-50%, -50%)', opacity: 0.6, zIndex: 15 }} />
             )}
           </div>
         </div>
       )}
-
     </div>
   );
 }
