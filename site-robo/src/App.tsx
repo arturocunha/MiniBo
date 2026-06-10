@@ -60,7 +60,7 @@ function App() {
   };
 
   // =========================================================================
-  // 2. COMANDO DE VOZ 
+  // 2. COMANDO DE VOZ (Com "RÉ" adicionado)
   // =========================================================================
   useEffect(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -84,7 +84,8 @@ function App() {
         if (fala.includes("frente") || fala.includes("forward") || fala.includes("go")) { 
           novoComando = "FRENTE"; motorE = 50; motorD = 50; encontrouComando = true; 
         } 
-        if (fala.includes("trás") || fala.includes("tras") || fala.includes("back")) { 
+        // ADICIONADO A PALAVRA "RÉ" AQUI
+        if (fala.includes("trás") || fala.includes("tras") || fala.includes("back") || fala.includes("ré") || fala.includes("re")) { 
           novoComando = "TRÁS"; motorE = -50; motorD = -50; encontrouComando = true; 
         } 
         if (fala.includes("esquerda") || fala.includes("left")) { 
@@ -96,11 +97,6 @@ function App() {
         
         if (fala.includes("para") || fala.includes("pare") || fala.includes("parar") || fala.includes("stop")) { 
           novoComando = "PARADO"; motorE = 0; motorD = 0; encontrouComando = true; 
-        }
-
-        // IF dormente do "vou" (reconhece internamente mas não faz nada)
-        if (fala.includes("vou")) {
-          // console.log("A palavra VOU foi escutada internamente.");
         }
 
         if (encontrouComando) {
@@ -267,7 +263,7 @@ function App() {
       {abaAtiva === 'voz' && (
         <div style={{ marginTop: '30px' }}>
           <h2>Diga para onde o MiniBo deve ir</h2>
-          <p>Palavras-chave: <strong>Frente, Trás, Esquerda, Direita, Para</strong></p>
+          <p>Palavras-chave: <strong>Frente, Trás, Ré, Esquerda, Direita, Para</strong></p>
           <button onClick={alternarMicrofone} style={{ padding: '20px 40px', fontSize: '20px', color: 'white', border: 'none', borderRadius: '10px', cursor: 'pointer', marginTop: '10px', backgroundColor: ouvindoVoz ? '#dc3545' : '#28a745' }}>{ouvindoVoz ? '🛑 Parar de Ouvir' : '🎙️ Começar a Ouvir'}</button>
           
           <div style={{ marginTop: '30px', minHeight: '40px' }}>
