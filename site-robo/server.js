@@ -11,11 +11,11 @@ const PORT = process.env.PORT || 3000;
 
 app.use(express.static(path.join(__dirname, 'dist')));
 
-app.get('*', (req, res) => {
+// A CORREÇÃO ESTÁ AQUI: Usamos /.*/ em vez de '*'
+app.get(/.*/, (req, res) => {
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
-// A CORREÇÃO ESTÁ AQUI: Adicionado '0.0.0.0' para permitir acesso externo
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`Servidor rodando na porta ${PORT}`);
 });
