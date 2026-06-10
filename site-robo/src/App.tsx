@@ -5,16 +5,13 @@ function App() {
   const [abaAtiva, setAbaAtiva] = useState<'voz' | 'visao'>('voz');
   const [statusWs, setStatusWs] = useState('A ligar...');
   
-  // Estados para a Voz
   const [comandoAtualVoz, setComandoAtualVoz] = useState('PARADO');
   const [ouvindoVoz, setOuvindoVoz] = useState(false);
   const [fraseOuvida, setFraseOuvida] = useState('');
   
-  // Estados para a Câmara e Visão
   const [cameraLigada, setCameraLigada] = useState(false); 
   const [infoJoystick, setInfoJoystick] = useState({ speed: 0, turn: 0, l: 0, r: 0 });
 
-  // Referências de memória
   const ws = useRef<WebSocket | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -28,12 +25,12 @@ function App() {
   const ouvindoRef = useRef(false); 
   
   const ultimoComandoRef = useRef('0,0,0,0'); 
+  const ultimaMensagemRef = useRef<number>(0); // Trava de Flood (Inundação)
 
   // =========================================================================
-  // 1. LIGAÇÃO WEBSOCKET (Dinâmica: Local ou Nuvem)
+  // 1. LIGAÇÃO WEBSOCKET
   // =========================================================================
   useEffect(() => {
-    // Descobre automaticamente se deve usar 'ws://' ou 'wss://' e pega a URL atual
     const protocoloWs = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const urlWs = `${protocoloWs}//${window.location.host}`;
     
@@ -48,19 +45,24 @@ function App() {
   const enviarComandoMixado = (vel_esq: number, vel_dir: number) => {
     const pwm_e = Math.round(vel_esq);
     const pwm_d = Math.round(vel_dir);
-    
-    // Duplica os valores para as duas rodas de cada lado (FFE, FFD, FTE, FTD)
     const novaStringComando = `${pwm_e},${pwm_d},${pwm_e},${pwm_d}`;
 
+    const agora = Date.now();
+
     if (ws.current && ws.current.readyState === WebSocket.OPEN && novaStringComando !== ultimoComandoRef.current) {
-      ultimoComandoRef.current = novaStringComando;
-      ws.current.send(novaStringComando);
-      console.log(`📡 WebSocket: ${novaStringComando}`);
+      // Evita o travamento do servidor enviando comandos a no máximo 10 vezes por segundo (100ms)
+      // Comandos de PARAR (0,0) furam a fila para garantir segurança imediata
+      if (novaStringComando === '0,0,0,0' || agora - ultimaMensagemRef.current > 100) {
+        ultimoComandoRef.current = novaStringComando;
+        ultimaMensagemRef.current = agora;
+        ws.current.send(novaStringComando);
+        console.log(`📡 WebSocket: ${novaStringComando}`);
+      }
     }
   };
 
   // =========================================================================
-  // 2. COMANDO DE VOZ 
+  // 2. COMANDO DE VOZ (Velocidade ajustada para 100%)
   // =========================================================================
   useEffect(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -82,25 +84,20 @@ function App() {
         let encontrouComando = false;
 
         if (fala.includes("frente") || fala.includes("forward") || fala.includes("go")) { 
-          novoComando = "FRENTE"; motorE = 50; motorD = 50; encontrouComando = true; 
+          novoComando = "FRENTE"; motorE = 100; motorD = 100; encontrouComando = true; 
         } 
-        if (fala.includes("trás") || fala.includes("tras") || fala.includes("back")) { 
-          novoComando = "TRÁS"; motorE = -50; motorD = -50; encontrouComando = true; 
+        if (fala.includes("trás") || fala.includes("tras") || fala.includes("back") || fala.includes("ré") || fala.includes("re")) { 
+          novoComando = "TRÁS"; motorE = -100; motorD = -100; encontrouComando = true; 
         } 
         if (fala.includes("esquerda") || fala.includes("left")) { 
-          novoComando = "ESQUERDA"; motorE = -50; motorD = 50; encontrouComando = true; 
+          novoComando = "ESQUERDA"; motorE = -100; motorD = 100; encontrouComando = true; 
         } 
         if (fala.includes("direita") || fala.includes("right")) { 
-          novoComando = "DIREITA"; motorE = 50; motorD = -50; encontrouComando = true; 
+          novoComando = "DIREITA"; motorE = 100; motorD = -100; encontrouComando = true; 
         } 
         
         if (fala.includes("para") || fala.includes("pare") || fala.includes("parar") || fala.includes("stop")) { 
           novoComando = "PARADO"; motorE = 0; motorD = 0; encontrouComando = true; 
-        }
-
-        // IF dormente do "vou" (reconhece internamente mas não faz nada)
-        if (fala.includes("vou")) {
-          // console.log("A palavra VOU foi escutada internamente.");
         }
 
         if (encontrouComando) {
@@ -130,7 +127,7 @@ function App() {
   };
 
   // =========================================================================
-  // 3. VISÃO COMPUTACIONAL 
+  // 3. VISÃO COMPUTACIONAL (Lógica Joystick XYZ de Tela)
   // =========================================================================
   
   const processarFrame = async () => {
@@ -149,43 +146,49 @@ function App() {
     canvasCtx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
 
     if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-      for (const landmarks of results.multiHandLandmarks) {
+      // Usamos apenas a primeira mão que aparecer na tela
+      const landmarks = results.multiHandLandmarks[0];
         
-        const drawConnectors = (window as any).drawConnectors;
-        const drawLandmarks = (window as any).drawLandmarks;
-        const HAND_CONNECTIONS = (window as any).HAND_CONNECTIONS;
+      const drawConnectors = (window as any).drawConnectors;
+      const drawLandmarks = (window as any).drawLandmarks;
+      const HAND_CONNECTIONS = (window as any).HAND_CONNECTIONS;
 
-        if(drawConnectors && drawLandmarks) {
-           drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, { color: '#00FF00', lineWidth: 3 });
-           drawLandmarks(canvasCtx, landmarks, { color: '#FF0000', lineWidth: 1, radius: 4 });
-        }
-
-        const wrist = landmarks[0];
-        const middleBase = landmarks[9];
-
-        const roll = wrist.x - middleBase.x; 
-        const pitch = wrist.z - middleBase.z;
-
-        const forward_speed = Math.max(-100, Math.min(100, pitch * 1200));
-        const turn_speed = Math.max(-100, Math.min(100, roll * 1000));
-
-        const deadzone = 15;
-        const speed_filtered = Math.abs(forward_speed) < deadzone ? 0 : forward_speed;
-        const turn_filtered = Math.abs(turn_speed) < deadzone ? 0 : turn_speed;
-
-        let motorEsq = speed_filtered + turn_filtered;
-        let motorDir = speed_filtered - turn_filtered;
-
-        const max_raw = Math.max(Math.abs(motorEsq), Math.abs(motorDir));
-        if (max_raw > 100) {
-          motorEsq = (motorEsq / max_raw) * 100;
-          motorDir = (motorDir / max_raw) * 100;
-        }
-
-        setInfoJoystick({ speed: Math.round(speed_filtered), turn: Math.round(turn_filtered), l: Math.round(motorEsq), r: Math.round(motorDir) });
-        enviarComandoMixado(motorEsq, motorDir);
+      if(drawConnectors && drawLandmarks) {
+         drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, { color: '#00FF00', lineWidth: 3 });
+         drawLandmarks(canvasCtx, landmarks, { color: '#FF0000', lineWidth: 1, radius: 4 });
       }
+
+      // Base central da mão
+      const centroDaMao = landmarks[9]; 
+
+      // A tela vai de 0.0 a 1.0. O centro absoluto é 0.5.
+      // Calculamos a diferença entre onde a mão está e o centro da câmera
+      const eixoX = centroDaMao.x - 0.5; // Curva
+      const eixoY = centroDaMao.y - 0.5; // Velocidade
+
+      // O eixo Y na câmera é invertido (0 é o topo). Multiplicamos por -200
+      // para que a mão no topo (ex: eixoY = -0.4) resulte em +80% de velocidade pra frente.
+      const forward_speed = Math.max(-100, Math.min(100, eixoY * -200));
+      const turn_speed = Math.max(-100, Math.min(100, eixoX * -200));
+
+      const deadzone = 20; // Tamanho do "quadrado invisível" no meio da tela onde o robô fica parado
+      const speed_filtered = Math.abs(forward_speed) < deadzone ? 0 : forward_speed;
+      const turn_filtered = Math.abs(turn_speed) < deadzone ? 0 : turn_speed;
+
+      let motorEsq = speed_filtered + turn_filtered;
+      let motorDir = speed_filtered - turn_filtered;
+
+      const max_raw = Math.max(Math.abs(motorEsq), Math.abs(motorDir));
+      if (max_raw > 100) {
+        motorEsq = (motorEsq / max_raw) * 100;
+        motorDir = (motorDir / max_raw) * 100;
+      }
+
+      setInfoJoystick({ speed: Math.round(speed_filtered), turn: Math.round(turn_filtered), l: Math.round(motorEsq), r: Math.round(motorDir) });
+      enviarComandoMixado(motorEsq, motorDir);
+      
     } else {
+      // Se não achar a mão, para na mesma hora
       setInfoJoystick({ speed: 0, turn: 0, l: 0, r: 0 });
       enviarComandoMixado(0, 0);
     }
@@ -267,7 +270,7 @@ function App() {
       {abaAtiva === 'voz' && (
         <div style={{ marginTop: '30px' }}>
           <h2>Diga para onde o MiniBo deve ir</h2>
-          <p>Palavras-chave: <strong>Frente, Trás, Esquerda, Direita, Para</strong></p>
+          <p>Palavras-chave: <strong>Frente, Trás, Ré, Esquerda, Direita, Para</strong></p>
           <button onClick={alternarMicrofone} style={{ padding: '20px 40px', fontSize: '20px', color: 'white', border: 'none', borderRadius: '10px', cursor: 'pointer', marginTop: '10px', backgroundColor: ouvindoVoz ? '#dc3545' : '#28a745' }}>{ouvindoVoz ? '🛑 Parar de Ouvir' : '🎙️ Começar a Ouvir'}</button>
           
           <div style={{ marginTop: '30px', minHeight: '40px' }}>
@@ -286,8 +289,8 @@ function App() {
 
       {abaAtiva === 'visao' && (
         <div style={{ marginTop: '30px' }}>
-          <h2>Pilote o MiniBo inclinando a Mão</h2>
-          <p style={{ color: '#aaa' }}>Frente/Trás: Velocidade | Lados: Curva | Centralize para Parar</p>
+          <h2>Pilote o MiniBo arrastando a Mão pela tela</h2>
+          <p style={{ color: '#aaa' }}>Mão no Topo: Frente | Rodapé: Ré | Lados: Curva | Centro: Parar</p>
           
           <button onClick={cameraLigada ? desligarVision : iniciarVision} style={{ padding: '15px 30px', fontSize: '16px', backgroundColor: cameraLigada ? '#dc3545' : '#17a2b8', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', marginBottom: '20px' }}>{cameraLigada ? '❌ Desligar Piloto Automático' : '🤖 Ativar Piloto Automático'}</button>
 
@@ -307,6 +310,11 @@ function App() {
                 <p style={{ margin: 0 }}>Motor Esq: {infoJoystick.l}</p>
                 <p style={{ margin: 0 }}>Motor Dir: {infoJoystick.r}</p>
               </div>
+            )}
+            
+            {/* Desenha uma mira invisível no centro da tela para ajudar na referência visual */}
+            {cameraLigada && (
+              <div style={{ position: 'absolute', top: '50%', left: '50%', width: '10px', height: '10px', backgroundColor: 'red', borderRadius: '50%', transform: 'translate(-50%, -50%)', opacity: 0.5, zIndex: 15 }} />
             )}
           </div>
         </div>
