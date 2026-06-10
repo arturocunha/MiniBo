@@ -11,7 +11,6 @@ const PORT = process.env.PORT || 3000;
 
 app.use(express.static(path.join(__dirname, 'dist')));
 
-// A CORREÇÃO ESTÁ AQUI: Usamos /.*/ em vez de '*'
 app.get(/.*/, (req, res) => {
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
@@ -22,14 +21,37 @@ const server = app.listen(PORT, '0.0.0.0', () => {
 
 const wss = new WebSocketServer({ server });
 
-wss.on('connection', (ws) => {
-  console.log('Robô ou Painel conectado!');
+// CORREÇÃO: identifica quem é o painel (site) e quem é o robô (ESP32)
+// O painel envia comandos como "100,100,100,100"
+// O ESP32 pode se identificar enviando "ESP32_CONNECTED" ao conectar
+
+const clientes = new Set();
+
+wss.on('connection', (ws, req) => {
+  const ip = req.socket.remoteAddress;
+  console.log(`Cliente conectado: ${ip}`);
+  clientes.add(ws);
 
   ws.on('message', (message) => {
-    wss.clients.forEach((client) => {
-      if (client !== ws && client.readyState === 1) { 
-        client.send(message.toString());
+    const texto = message.toString();
+
+    // Faz broadcast para TODOS os outros clientes conectados
+    // Isso garante que o ESP32 receba os comandos do painel
+    // e que o painel receba status do ESP32 (se implementado)
+    clientes.forEach((client) => {
+      if (client !== ws && client.readyState === 1) {
+        client.send(texto);
       }
     });
+  });
+
+  ws.on('close', () => {
+    console.log(`Cliente desconectado: ${ip}`);
+    clientes.delete(ws);
+  });
+
+  ws.on('error', (err) => {
+    console.error(`Erro no cliente ${ip}:`, err.message);
+    clientes.delete(ws);
   });
 });

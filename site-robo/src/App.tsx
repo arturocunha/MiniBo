@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import './App.css';
 
 function App() {
@@ -38,13 +38,29 @@ function App() {
   // 1. LIGAÇÃO WEBSOCKET E TRANSMISSÃO CONTÍNUA CRONOMETRADA
   // =========================================================================
   useEffect(() => {
+    // CORREÇÃO: Conecta diretamente ao servidor WebSocket (server.js)
+    // Se estiver rodando em produção (porta 3000), usa o mesmo host
+    // Se estiver em dev (Vite na porta 5173), aponta para a porta do servidor
     const protocoloWs = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const urlWs = `${protocoloWs}//${window.location.host}`;
     
-    ws.current = new WebSocket(urlWs);
-    ws.current.onopen = () => setStatusWs('Ligado 🟢');
-    ws.current.onclose = () => setStatusWs('Desligado 🔴');
-    ws.current.onerror = () => setStatusWs('Erro na ligação ⚠️');
+    // Em desenvolvimento o Vite roda na 5173 e o server.js na 3000
+    // Em produção ambos estão na mesma porta (3000)
+    const host = window.location.hostname;
+    const porta = window.location.port === '5173' ? '3000' : window.location.port;
+    const urlWs = `${protocoloWs}//${host}:${porta}`;
+    
+    const conectar = () => {
+      ws.current = new WebSocket(urlWs);
+      ws.current.onopen = () => setStatusWs('Ligado 🟢');
+      ws.current.onclose = () => {
+        setStatusWs('Desligado 🔴');
+        // Tenta reconectar após 3 segundos
+        setTimeout(conectar, 3000);
+      };
+      ws.current.onerror = () => setStatusWs('Erro na ligação ⚠️');
+    };
+
+    conectar();
 
     const transmissor = setInterval(() => {
       if (ws.current && ws.current.readyState === WebSocket.OPEN) {
@@ -65,10 +81,11 @@ function App() {
       clearInterval(transmissor);
       ws.current?.close();
     };
-  }, [MULT_FFE, MULT_FFD, MULT_FTE, MULT_FTD]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // =========================================================================
-  // 2. COMANDO DE VOZ (LÓGICA REGEX BLINDADA)
+  // 2. COMANDO DE VOZ — MANTÉM ESTADO (não para ao silenciar)
   // =========================================================================
   useEffect(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -87,21 +104,32 @@ function App() {
         const fala = event.results[lastIndex][0].transcript.toLowerCase().trim();
         setFraseOuvida(fala);
         
-        // A MÁGICA DO \b: Obriga a procurar a palavra exata, isolada por espaços.
-        // Assim, o "re" de "direita" ou "frente" nunca mais vai ativar a marcha ré.
-        if (/\b(frente|avançar|vai)\b/.test(fala)) { 
+        // CORREÇÃO DOS MAPEAMENTOS:
+        // Frente  = todos os motores positivos → robô vai para frente
+        // Trás    = todos os motores negativos → robô vai para trás
+        // Esquerda = motores esquerdos negativos, direitos positivos → gira à esquerda
+        // Direita  = motores esquerdos positivos, direitos negativos → gira à direita
+        //
+        // Layout dos motores: [FFE, FFD, FTE, FTD]
+        //   FFE/FTE = lado Esquerdo
+        //   FFD/FTD = lado Direito
+
+        if (/\b(frente|avançar|avançar|vai)\b/.test(fala)) { 
           setComandoAtualVoz("FRENTE");
+          // CORREÇÃO: mantém rodando continuamente — não para até receber outro comando
           estadoMotores.current = [100, 100, 100, 100]; 
         } 
         else if (/\b(esquerda|left)\b/.test(fala)) { 
           setComandoAtualVoz("ESQUERDA");
+          // Esquerda: motor esq para trás (-), motor dir para frente (+)
           estadoMotores.current = [-100, 100, -100, 100]; 
         } 
         else if (/\b(direita|right)\b/.test(fala)) { 
           setComandoAtualVoz("DIREITA");
+          // Direita: motor esq para frente (+), motor dir para trás (-)
           estadoMotores.current = [100, -100, 100, -100]; 
         } 
-        else if (/\b(trás|tras|ré|re|recuar)\b/.test(fala)) { 
+        else if (/\b(tr[aá]s|r[eé]|recuar)\b/.test(fala)) { 
           setComandoAtualVoz("TRÁS");
           estadoMotores.current = [-100, -100, -100, -100]; 
         } 
@@ -109,9 +137,14 @@ function App() {
           setComandoAtualVoz("PARADO");
           estadoMotores.current = [0, 0, 0, 0]; 
         }
+        // NOTA: Se a palavra não for reconhecida, o estado anterior é MANTIDO.
+        // Isso garante que "frente" continue indo pra frente até ouvir outro comando.
       };
 
-      recognitionRef.current.onend = () => { if (ouvindoRef.current) recognitionRef.current.start(); };
+      // CORREÇÃO: reinicia automaticamente para manter escuta contínua
+      recognitionRef.current.onend = () => { 
+        if (ouvindoRef.current) recognitionRef.current.start(); 
+      };
     }
   }, []); 
 
@@ -121,6 +154,7 @@ function App() {
       ouvindoRef.current = false; 
       setOuvindoVoz(false); 
       recognitionRef.current.stop(); 
+      // Para os motores ao desligar o microfone
       estadoMotores.current = [0, 0, 0, 0];
       setComandoAtualVoz("PARADO"); 
       setFraseOuvida('');
@@ -132,20 +166,24 @@ function App() {
   };
 
   // =========================================================================
-  // 3. VISÃO COMPUTACIONAL (Joystick Absoluto)
+  // 3. VISÃO COMPUTACIONAL — CORREÇÃO DO LOOP E DO CANVAS
   // =========================================================================
-  const processarFrame = async () => {
-    if (visaoAtivaRef.current && videoRef.current && handsRef.current) {
-      await handsRef.current.send({ image: videoRef.current });
-      loopVisaoRef.current = requestAnimationFrame(processarFrame);
-    }
-  };
 
-  const onResultsHand = (results: any) => {
+  // CORREÇÃO: onResultsHand como useCallback para evitar referências obsoletas
+  const onResultsHand = useCallback((results: any) => {
     if (!canvasRef.current || !videoRef.current || !visaoAtivaRef.current) return;
 
     const canvasCtx = canvasRef.current.getContext('2d');
     if (!canvasCtx) return;
+
+    // CORREÇÃO: sincroniza dimensões do canvas com o vídeo real
+    const vid = videoRef.current;
+    if (vid.videoWidth && vid.videoHeight) {
+      if (canvasRef.current.width !== vid.videoWidth) {
+        canvasRef.current.width = vid.videoWidth;
+        canvasRef.current.height = vid.videoHeight;
+      }
+    }
 
     canvasCtx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
 
@@ -156,9 +194,9 @@ function App() {
       const drawLandmarks = (window as any).drawLandmarks;
       const HAND_CONNECTIONS = (window as any).HAND_CONNECTIONS;
 
-      if(drawConnectors && drawLandmarks) {
-         drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, { color: '#00FF00', lineWidth: 3 });
-         drawLandmarks(canvasCtx, landmarks, { color: '#FF0000', lineWidth: 1, radius: 4 });
+      if (drawConnectors && drawLandmarks) {
+        drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, { color: '#00FF00', lineWidth: 3 });
+        drawLandmarks(canvasCtx, landmarks, { color: '#FF0000', lineWidth: 1, radius: 4 });
       }
 
       const centroDaMao = landmarks[9]; 
@@ -194,6 +232,23 @@ function App() {
       setInfoJoystick({ speed: 0, turn: 0, l: 0, r: 0 });
       estadoMotores.current = [0, 0, 0, 0];
     }
+  }, []);
+
+  // CORREÇÃO: processarFrame usa referência estável via ref
+  const processarFrameRef = useRef<() => void>(() => {});
+
+  processarFrameRef.current = async () => {
+    if (visaoAtivaRef.current && videoRef.current && handsRef.current) {
+      // Só processa se o vídeo tiver dados reais
+      if (videoRef.current.readyState >= 2) {
+        try {
+          await handsRef.current.send({ image: videoRef.current });
+        } catch {
+          // ignora erros de frame
+        }
+      }
+      loopVisaoRef.current = requestAnimationFrame(processarFrameRef.current);
+    }
   };
 
   const iniciarVision = async () => {
@@ -206,24 +261,31 @@ function App() {
       streamRef.current = stream;
       videoRef.current.srcObject = stream;
 
-      if (!handsRef.current) {
-        handsRef.current = new Hands({
-          locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
-        });
-        handsRef.current.setOptions({
-          maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7
-        });
-        handsRef.current.onResults(onResultsHand);
-      }
+      // CORREÇÃO: recria o objeto Hands se necessário para garantir callback atualizado
+      handsRef.current = new Hands({
+        locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+      });
+      handsRef.current.setOptions({
+        maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7
+      });
+      // CORREÇÃO: usa o callback estável do useCallback
+      handsRef.current.onResults(onResultsHand);
 
       videoRef.current.onloadedmetadata = () => {
-        if (videoRef.current) videoRef.current.play();
+        if (videoRef.current) {
+          videoRef.current.play();
+          // Sincroniza tamanho do canvas com o vídeo real
+          if (canvasRef.current && videoRef.current.videoWidth) {
+            canvasRef.current.width = videoRef.current.videoWidth;
+            canvasRef.current.height = videoRef.current.videoHeight;
+          }
+        }
         visaoAtivaRef.current = true;
         setCameraLigada(true);
-        processarFrame(); 
+        processarFrameRef.current();
       };
     } catch (erro) {
-      alert("Erro na câmera.");
+      alert("Erro na câmera. Verifique se permitiu o acesso.");
     }
   };
 
@@ -240,6 +302,7 @@ function App() {
   useEffect(() => {
     if (abaAtiva !== 'visao') desligarVision();
     if (abaAtiva !== 'voz' && ouvindoVoz) alternarMicrofone();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [abaAtiva]);
 
   return (
@@ -258,6 +321,7 @@ function App() {
         <div style={{ marginTop: '30px' }}>
           <h2>Controle por Comando de Voz Estável</h2>
           <p>Diga de forma clara: <strong>Frente, Trás, Esquerda, Direita, Parar</strong></p>
+          <p style={{ color: '#aaa', fontSize: '13px' }}>💡 O robô continua em movimento até ouvir um novo comando ou "Parar"</p>
           <button onClick={alternarMicrofone} style={{ padding: '20px 40px', fontSize: '20px', color: 'white', border: 'none', borderRadius: '10px', cursor: 'pointer', marginTop: '10px', backgroundColor: ouvindoVoz ? '#dc3545' : '#28a745' }}>{ouvindoVoz ? '🛑 Parar Ouvinte' : '🎙️ Ativar Ouvinte'}</button>
           
           <div style={{ marginTop: '30px', minHeight: '40px' }}>
@@ -281,7 +345,7 @@ function App() {
           <button onClick={cameraLigada ? desligarVision : iniciarVision} style={{ padding: '15px 30px', fontSize: '16px', backgroundColor: cameraLigada ? '#dc3545' : '#17a2b8', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', marginBottom: '20px' }}>{cameraLigada ? '❌ Desligar Câmera' : '🤖 Ligar Câmera'}</button>
           <br />
           <div style={{ position: 'relative', width: '640px', height: '480px', margin: '0 auto', border: cameraLigada ? '3px solid #28a745' : '3px solid #555', borderRadius: '10px', backgroundColor: '#000', overflow: 'hidden' }}>
-            <video ref={videoRef} playsInline style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }} />
+            <video ref={videoRef} playsInline muted style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }} />
             <canvas ref={canvasRef} width="640" height="480" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 10, transform: 'scaleX(-1)' }} />
             {cameraLigada && (
               <div style={{ position: 'absolute', bottom: '20px', left: '20px', backgroundColor: 'rgba(0,0,0,0.7)', padding: '10px', borderRadius: '5px', textAlign: 'left', fontSize: '14px', color: '#0f0', zIndex: 20 }}>
