@@ -117,25 +117,25 @@ function App() {
         if (/\b(frente|avançar|avançar|vai)\b/.test(fala)) { 
           setComandoAtualVoz("FRENTE");
           // CORREÇÃO: mantém rodando continuamente — não para até receber outro comando
-          estadoMotores.current = [100, 100, 100, 100]; 
+          estadoMotores.current = [180, -180, 180, -180]; 
         } 
         else if (/\b(esquerda|left)\b/.test(fala)) { 
           setComandoAtualVoz("ESQUERDA");
           // Esquerda: motor esq para trás (-), motor dir para frente (+)
-          estadoMotores.current = [-100, 100, -100, 100]; 
+          estadoMotores.current = [-180, -180, -180, -180]; 
         } 
         else if (/\b(direita|right)\b/.test(fala)) { 
           setComandoAtualVoz("DIREITA");
           // Direita: motor esq para frente (+), motor dir para trás (-)
-          estadoMotores.current = [100, -100, 100, -100]; 
+          estadoMotores.current = [180, 180, 180, 180]; 
         } 
-        else if (/\b(tr[aá]s|r[eé]|recuar)\b/.test(fala)) { 
+        else if (/\b(tr[aász]|r[eé]|recuar)\b/.test(fala)) { 
           setComandoAtualVoz("TRÁS");
-          estadoMotores.current = [-100, -100, -100, -100]; 
+          estadoMotores.current = [-180, 180, -180, 180]; 
         } 
         else if (/\b(para|pare|parar|stop)\b/.test(fala)) { 
           setComandoAtualVoz("PARADO");
-          estadoMotores.current = [0, 0, 0, 0]; 
+          estadoMotores.current = [90, 90, 90, 90]; 
         }
         // NOTA: Se a palavra não for reconhecida, o estado anterior é MANTIDO.
         // Isso garante que "frente" continue indo pra frente até ouvir outro comando.
