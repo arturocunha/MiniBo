@@ -135,7 +135,10 @@ function App() {
         } 
         else if (/\b(para|pare|parar|stop)\b/.test(fala)) { 
           setComandoAtualVoz("PARADO");
-          estadoMotores.current = [90, 90, 90, 90]; 
+          // CORREÇÃO DA PARADA: envia 0,0,0,0 -> a ESP coloca os 4 servos
+          // exatamente no ponto-morto (90°). Antes era 90,90,90,90, que a ESP
+          // interpretava como ~171° e fazia algumas rodas continuarem girando.
+          estadoMotores.current = [0, 0, 0, 0]; 
         }
         // NOTA: Se a palavra não for reconhecida, o estado anterior é MANTIDO.
         // Isso garante que "frente" continue indo pra frente até ouvir outro comando.
@@ -171,12 +174,12 @@ function App() {
 
   const [zonaAtual, setZonaAtual] = useState<string>('PARADO');
 
-  // Divide a tela em 4 zonas:
-  //   CIMA    (y < 0.5 e |y-0.5| > |x-0.5|) → FRENTE
-  //   BAIXO   (y > 0.5 e |y-0.5| > |x-0.5|) → RÉ
-  //   DIREITA (x > 0.5 e |x-0.5| >= |y-0.5|) → DIREITA
-  //   ESQUERDA(x < 0.5 e |x-0.5| >= |y-0.5|) → ESQUERDA
-  // Os valores dos motores são idênticos aos do comando de voz.
+  // Divide a tela em 4 zonas triangulares + 1 QUADRADO CENTRAL de PARADA:
+  //   QUADRADO CENTRAL        → PARAR (0,0,0,0)
+  //   CIMA    (topo)          → FRENTE
+  //   BAIXO   (rodapé)        → RÉ
+  //   DIREITA / ESQUERDA      → curvas pivotadas
+  // Os valores dos motores de movimento são idênticos aos do comando de voz.
   const onResultsHand = useCallback((results: any) => {
     if (!canvasRef.current || !videoRef.current || !visaoAtivaRef.current) return;
 
@@ -198,62 +201,72 @@ function App() {
 
     canvasCtx.clearRect(0, 0, W, H);
 
-    // Desenha as 4 zonas coloridas com transparência
+    // ---------------------------------------------------------------------
+    // Desenha as 4 zonas triangulares (a partir do centro) com transparência
     // CIMA = azul, BAIXO = vermelho, ESQUERDA = laranja, DIREITA = verde
-    // Como o vídeo está espelhado (scaleX(-1)), as zonas visuais também ficam espelhadas.
-    // Esquerda na tela = mão à direita do usuário → comando DIREITA (correto para câmera espelhada)
+    // Como o vídeo está espelhado (scaleX(-1)), as zonas visuais também ficam
+    // espelhadas: o lado esquerdo da tela = lado direito real do usuário.
+    // ---------------------------------------------------------------------
     canvasCtx.globalAlpha = 0.18;
-    // CIMA
-    canvasCtx.fillStyle = '#00aaff';
-    canvasCtx.beginPath();
-    canvasCtx.moveTo(0, 0); canvasCtx.lineTo(W, 0);
-    canvasCtx.lineTo(W / 2, H / 2); canvasCtx.lineTo(0, 0);
-    canvasCtx.moveTo(W, 0); canvasCtx.lineTo(W / 2, H / 2); canvasCtx.lineTo(W, 0);
-    canvasCtx.fillRect(0, 0, W, H / 2); // fallback simples
-    // Triângulo CIMA
+    // Triângulo CIMA (FRENTE)
     canvasCtx.fillStyle = '#00aaff';
     canvasCtx.beginPath();
     canvasCtx.moveTo(0, 0); canvasCtx.lineTo(W, 0); canvasCtx.lineTo(W / 2, H / 2);
     canvasCtx.fill();
-    // Triângulo BAIXO
+    // Triângulo BAIXO (RÉ)
     canvasCtx.fillStyle = '#ff3333';
     canvasCtx.beginPath();
     canvasCtx.moveTo(0, H); canvasCtx.lineTo(W, H); canvasCtx.lineTo(W / 2, H / 2);
     canvasCtx.fill();
-    // Triângulo ESQUERDA (lado esquerdo da tela = lado direito real por causa do espelho)
+    // Triângulo ESQUERDA da imagem (= DIREITA real por causa do espelho)
     canvasCtx.fillStyle = '#ff9900';
     canvasCtx.beginPath();
     canvasCtx.moveTo(0, 0); canvasCtx.lineTo(0, H); canvasCtx.lineTo(W / 2, H / 2);
     canvasCtx.fill();
-    // Triângulo DIREITA
+    // Triângulo DIREITA da imagem (= ESQUERDA real)
     canvasCtx.fillStyle = '#00cc44';
     canvasCtx.beginPath();
     canvasCtx.moveTo(W, 0); canvasCtx.lineTo(W, H); canvasCtx.lineTo(W / 2, H / 2);
     canvasCtx.fill();
     canvasCtx.globalAlpha = 1.0;
 
-    // Labels das zonas — canvas NÃO está espelhado, então esq/dir são diretos
+    // ---------------------------------------------------------------------
+    // QUADRADO CENTRAL DE PARADA
+    // margemCentro = metade do lado do quadrado, em fração da tela (0 a 0.5)
+    // ---------------------------------------------------------------------
+    const margemCentro = 0.18;
+    const sqX = (0.5 - margemCentro) * W;
+    const sqY = (0.5 - margemCentro) * H;
+    const sqLargura = (margemCentro * 2) * W;
+    const sqAltura  = (margemCentro * 2) * H;
+
+    canvasCtx.globalAlpha = 0.45;
+    canvasCtx.fillStyle = '#222222';
+    canvasCtx.fillRect(sqX, sqY, sqLargura, sqAltura);
+    canvasCtx.globalAlpha = 1.0;
+    canvasCtx.strokeStyle = '#ffffff';
+    canvasCtx.lineWidth = 3;
+    canvasCtx.strokeRect(sqX, sqY, sqLargura, sqAltura);
+
+    // Labels das zonas (mantidos como no original)
     canvasCtx.font = 'bold 22px Arial';
     canvasCtx.textAlign = 'center';
     canvasCtx.fillStyle = 'rgba(255,255,255,0.85)';
     canvasCtx.fillText('▲ FRENTE', W / 2, 36);
     canvasCtx.fillText('▼ RÉ', W / 2, H - 16);
-    // Vídeo espelhado + canvas não-espelhado: lado esquerdo da tela = mão direita real
-    // Para o usuário olhando a câmera como espelho: mover mão p/ SUA esquerda = esquerda na tela
-    canvasCtx.fillText('◀ ESQUERDA', 72, H / 2);
-    canvasCtx.fillText('DIREITA ▶', W - 72, H / 2);
+    // Espelhado: o label esquerdo da tela corresponde ao lado direito real
+    canvasCtx.fillText('◀ DIREITA', 70, H / 2);
+    canvasCtx.fillText('ESQUERDA ▶', W - 70, H / 2);
 
-    // Zona neutra central (círculo cinza)
-    const DEADZONE_R = 0.12; // raio normalizado
-    canvasCtx.globalAlpha = 0.55;
-    canvasCtx.fillStyle = '#111111';
-    canvasCtx.beginPath();
-    canvasCtx.arc(W / 2, H / 2, DEADZONE_R * Math.min(W, H), 0, Math.PI * 2);
-    canvasCtx.fill();
-    canvasCtx.globalAlpha = 1.0;
-    canvasCtx.font = 'bold 13px Arial';
-    canvasCtx.fillStyle = 'rgba(180,180,180,0.8)';
-    canvasCtx.fillText('PARAR', W / 2, H / 2 + 5);
+    // Texto "PARE" dentro do quadrado — des-espelhado para ficar legível
+    canvasCtx.save();
+    canvasCtx.translate(W / 2, H / 2);
+    canvasCtx.scale(-1, 1); // desfaz o scaleX(-1) do canvas só para este texto
+    canvasCtx.fillStyle = '#ffffff';
+    canvasCtx.font = 'bold 30px Arial';
+    canvasCtx.textAlign = 'center';
+    canvasCtx.fillText('■ PARE', 0, -22);
+    canvasCtx.restore();
 
     if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
       const landmarks = results.multiHandLandmarks[0];
@@ -268,39 +281,42 @@ function App() {
       }
 
       // Ponto 9 = centro da palma
-      // O MediaPipe retorna x no espaço da imagem original (não espelhada).
-      // Como o vídeo está espelhado na tela, espelhamos o x para alinhar
-      // a posição visual da mão com a zona correta no canvas não-espelhado.
-      const cx = 1 - landmarks[9].x; // espelha X para coincidir com o espelho do vídeo
-      const cy = landmarks[9].y;
+      const cx = landmarks[9].x; // 0 = esquerda da imagem, 1 = direita
+      const cy = landmarks[9].y; // 0 = topo, 1 = base
 
       const dx = Math.abs(cx - 0.5);
       const dy = Math.abs(cy - 0.5);
 
+      // A mão está dentro do quadrado central?
+      const noCentro = dx < margemCentro && dy < margemCentro;
+
       let zona: string;
       let motores: [number, number, number, number];
 
-      // Zona neutra: dentro do círculo central
-      if (dx < DEADZONE_R && dy < DEADZONE_R &&
-          Math.sqrt(dx * dx + dy * dy) < DEADZONE_R) {
+      if (noCentro) {
+        // Mão no quadrado central → PARAR (todos no ponto-morto)
         zona = 'PARADO';
-        motores = [90, 90, 90, 90];
+        motores = [0, 0, 0, 0];
       } else if (dy > dx) {
         if (cy < 0.5) {
+          // Mão no topo → FRENTE
           zona = 'FRENTE';
           motores = [180, -180, 180, -180];
         } else {
+          // Mão embaixo → RÉ
           zona = 'RÉ';
           motores = [-180, 180, -180, 180];
         }
       } else {
+        // Vídeo espelhado: cx=0 é o lado direito real do usuário
         if (cx < 0.5) {
-          // Lado esquerdo da tela (após espelhar) = esquerda real do usuário
-          zona = 'ESQUERDA';
-          motores = [-180, -180, -180, -180];
-        } else {
+          // Lado esquerdo da imagem = lado direito do usuário → DIREITA
           zona = 'DIREITA';
           motores = [180, 180, 180, 180];
+        } else {
+          // Lado direito da imagem = lado esquerdo do usuário → ESQUERDA
+          zona = 'ESQUERDA';
+          motores = [-180, -180, -180, -180];
         }
       }
 
@@ -308,11 +324,13 @@ function App() {
       setZonaAtual(zona);
       setInfoJoystick({ speed: motores[0], turn: motores[1], l: motores[0], r: motores[1] });
 
-      // Nome da zona ativa no centro
+      // Destaca a zona ativa com o nome no centro
+      canvasCtx.strokeStyle = '#ffff00';
+      canvasCtx.lineWidth = 4;
       canvasCtx.font = 'bold 40px Arial';
-      canvasCtx.fillStyle = zona === 'PARADO' ? '#aaaaaa' : '#ffff00';
+      canvasCtx.fillStyle = '#ffff00';
       canvasCtx.textAlign = 'center';
-      canvasCtx.fillText(zona, W / 2, H / 2 + 14);
+      canvasCtx.fillText(zona, W / 2, H / 2 + 28);
 
     } else {
       // Sem mão detectada → para
@@ -429,12 +447,12 @@ function App() {
       {abaAtiva === 'visao' && (
         <div style={{ marginTop: '30px' }}>
           <h2>Pilote Arrastando a Mão pela Tela</h2>
-          <p style={{ color: '#aaa' }}>Topo: Frente | Rodapé: Ré | Laterais: Curva Pivotada</p>
+          <p style={{ color: '#aaa' }}>Topo: Frente | Rodapé: Ré | Laterais: Curva Pivotada | Centro: Pare</p>
           <button onClick={cameraLigada ? desligarVision : iniciarVision} style={{ padding: '15px 30px', fontSize: '16px', backgroundColor: cameraLigada ? '#dc3545' : '#17a2b8', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', marginBottom: '20px' }}>{cameraLigada ? '❌ Desligar Câmera' : '🤖 Ligar Câmera'}</button>
           <br />
           <div style={{ position: 'relative', width: '640px', height: '480px', margin: '0 auto', border: cameraLigada ? '3px solid #28a745' : '3px solid #555', borderRadius: '10px', backgroundColor: '#000', overflow: 'hidden' }}>
             <video ref={videoRef} playsInline muted style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }} />
-            <canvas ref={canvasRef} width="640" height="480" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 10 }} />
+            <canvas ref={canvasRef} width="640" height="480" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 10, transform: 'scaleX(-1)' }} />
             {cameraLigada && (
               <div style={{ position: 'absolute', bottom: '20px', left: '20px', backgroundColor: 'rgba(0,0,0,0.75)', padding: '10px 14px', borderRadius: '8px', textAlign: 'left', fontSize: '14px', color: '#0f0', zIndex: 20 }}>
                 <p style={{ margin: 0, fontWeight: 'bold', color: zonaAtual === 'PARADO' ? '#dc3545' : '#ffff00', fontSize: '18px' }}>⬛ {zonaAtual}</p>
