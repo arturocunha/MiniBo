@@ -3,12 +3,12 @@ import './App.css';
 
 function App() {
   // =========================================================================
-  // ⚙️ MATRIZ DE CALIBRAÇÃO DE SINAIS
+  // ⚙️ MATRIZ DE CALIBRAÇÃO INDEPENDENTE DOS MOTORES
   // =========================================================================
-  const MULT_FFE = 1; 
-  const MULT_FFD = 1; 
-  const MULT_FTE = 1; 
-  const MULT_FTD = 1; 
+  const MULT_FFE = 1; // Frente-Frente-Esquerda (Pino 5)
+  const MULT_FFD = 1; // Frente-Frente-Direita  (Pino 6)
+  const MULT_FTE = 1; // Frente-Trás-Esquerda   (Pino 7)
+  const MULT_FTD = 1; // Frente-Trás-Direita    (Pino 8)
 
   const [abaAtiva, setAbaAtiva] = useState<'voz' | 'visao'>('voz');
   const [statusWs, setStatusWs] = useState('A ligar...');
@@ -33,9 +33,6 @@ function App() {
   const ouvindoRef = useRef(false); 
   
   const estadoMotores = useRef<[number, number, number, number]>([0, 0, 0, 0]);
-  
-  // Referência visual para você ver o fluxo infinito de pacotes
-  const contadorPacotesRef = useRef<HTMLSpanElement>(null);
 
   // =========================================================================
   // 1. LIGAÇÃO WEBSOCKET E TRANSMISSÃO CONTÍNUA (HEARTBEAT)
@@ -58,8 +55,7 @@ function App() {
 
     conectar();
 
-    let pacotes = 0;
-    // O Coração do Robô: Bate a cada 100 milissegundos enviando o dado trancado
+    // ESTE É O CORAÇÃO: Envia o comando atual o tempo todo para a ESP32
     const transmissor = setInterval(() => {
       if (ws.current && ws.current.readyState === WebSocket.OPEN) {
         const [ffe, ffd, fte, ftd] = estadoMotores.current;
@@ -72,11 +68,6 @@ function App() {
         ].join(',');
 
         ws.current.send(cmdFinal);
-        
-        pacotes++;
-        if(contadorPacotesRef.current) {
-          contadorPacotesRef.current.innerText = pacotes.toString();
-        }
       }
     }, 100);
 
@@ -84,10 +75,11 @@ function App() {
       clearInterval(transmissor);
       ws.current?.close();
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // =========================================================================
-  // 2. COMANDO DE VOZ
+  // 2. COMANDO DE VOZ — COM OS SINAIS FÍSICOS EXATOS
   // =========================================================================
   useEffect(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -100,11 +92,13 @@ function App() {
 
       recognitionRef.current.onresult = (event: any) => {
         const lastIndex = event.results.length - 1;
+        
         if (!event.results[lastIndex].isFinal) return;
 
         const fala = event.results[lastIndex][0].transcript.toLowerCase().trim();
         setFraseOuvida(fala);
         
+        // Mapeamento mantendo a sua lógica exata de sinais, limitados a 100
         if (/\b(frente|avançar|vai)\b/.test(fala)) { 
           setComandoAtualVoz("FRENTE");
           estadoMotores.current = [100, -100, 100, -100]; 
@@ -134,7 +128,7 @@ function App() {
   }, []); 
 
   const alternarMicrofone = () => {
-    if (!recognitionRef.current) return alert("Navegador não suporta voz.");
+    if (!recognitionRef.current) return alert("O navegador não suporta comando de voz.");
     if (ouvindoVoz) { 
       ouvindoRef.current = false; 
       setOuvindoVoz(false); 
@@ -150,60 +144,134 @@ function App() {
   };
 
   // =========================================================================
-  // 3. VISÃO COMPUTACIONAL 
+  // 3. VISÃO COMPUTACIONAL — COM OS SINAIS FÍSICOS EXATOS
   // =========================================================================
   const [zonaAtual, setZonaAtual] = useState<string>('PARADO');
 
   const onResultsHand = useCallback((results: any) => {
     if (!canvasRef.current || !videoRef.current || !visaoAtivaRef.current) return;
 
-    const canvasCtx = canvasRef.current.getContext('2d');
+    const canvas = canvasRef.current;
+    const vid = videoRef.current;
+    const canvasCtx = canvas.getContext('2d');
     if (!canvasCtx) return;
 
-    const W = canvasRef.current.width;
-    const H = canvasRef.current.height;
+    if (vid.videoWidth && vid.videoHeight) {
+      if (canvas.width !== vid.videoWidth) {
+        canvas.width = vid.videoWidth;
+        canvas.height = vid.videoHeight;
+      }
+    }
+
+    const W = canvas.width;
+    const H = canvas.height;
+
     canvasCtx.clearRect(0, 0, W, H);
 
     canvasCtx.globalAlpha = 0.18;
-    canvasCtx.fillStyle = '#00aaff'; canvasCtx.beginPath(); canvasCtx.moveTo(0,0); canvasCtx.lineTo(W,0); canvasCtx.lineTo(W/2,H/2); canvasCtx.fill();
-    canvasCtx.fillStyle = '#ff3333'; canvasCtx.beginPath(); canvasCtx.moveTo(0,H); canvasCtx.lineTo(W,H); canvasCtx.lineTo(W/2,H/2); canvasCtx.fill();
-    canvasCtx.fillStyle = '#ff9900'; canvasCtx.beginPath(); canvasCtx.moveTo(0,0); canvasCtx.lineTo(0,H); canvasCtx.lineTo(W/2,H/2); canvasCtx.fill();
-    canvasCtx.fillStyle = '#00cc44'; canvasCtx.beginPath(); canvasCtx.moveTo(W,0); canvasCtx.lineTo(W,H); canvasCtx.lineTo(W/2,H/2); canvasCtx.fill();
+    canvasCtx.fillStyle = '#00aaff';
+    canvasCtx.beginPath();
+    canvasCtx.moveTo(0, 0); canvasCtx.lineTo(W, 0); canvasCtx.lineTo(W / 2, H / 2);
+    canvasCtx.fill();
+    canvasCtx.fillStyle = '#ff3333';
+    canvasCtx.beginPath();
+    canvasCtx.moveTo(0, H); canvasCtx.lineTo(W, H); canvasCtx.lineTo(W / 2, H / 2);
+    canvasCtx.fill();
+    canvasCtx.fillStyle = '#ff9900';
+    canvasCtx.beginPath();
+    canvasCtx.moveTo(0, 0); canvasCtx.lineTo(0, H); canvasCtx.lineTo(W / 2, H / 2);
+    canvasCtx.fill();
+    canvasCtx.fillStyle = '#00cc44';
+    canvasCtx.beginPath();
+    canvasCtx.moveTo(W, 0); canvasCtx.lineTo(W, H); canvasCtx.lineTo(W / 2, H / 2);
+    canvasCtx.fill();
     canvasCtx.globalAlpha = 1.0;
 
     const margemCentro = 0.18;
-    const sqX = (0.5 - margemCentro) * W, sqY = (0.5 - margemCentro) * H, sqL = (margemCentro * 2) * W, sqA = (margemCentro * 2) * H;
+    const sqX = (0.5 - margemCentro) * W;
+    const sqY = (0.5 - margemCentro) * H;
+    const sqLargura = (margemCentro * 2) * W;
+    const sqAltura  = (margemCentro * 2) * H;
 
-    canvasCtx.globalAlpha = 0.45; canvasCtx.fillStyle = '#222'; canvasCtx.fillRect(sqX, sqY, sqL, sqA); canvasCtx.globalAlpha = 1.0;
-    canvasCtx.strokeStyle = '#fff'; canvasCtx.lineWidth = 3; canvasCtx.strokeRect(sqX, sqY, sqL, sqA);
+    canvasCtx.globalAlpha = 0.45;
+    canvasCtx.fillStyle = '#222222';
+    canvasCtx.fillRect(sqX, sqY, sqLargura, sqAltura);
+    canvasCtx.globalAlpha = 1.0;
+    canvasCtx.strokeStyle = '#ffffff';
+    canvasCtx.lineWidth = 3;
+    canvasCtx.strokeRect(sqX, sqY, sqLargura, sqAltura);
 
-    canvasCtx.font = 'bold 22px Arial'; canvasCtx.fillStyle = 'rgba(255,255,255,0.85)'; canvasCtx.textAlign = 'center';
-    canvasCtx.fillText('▲ FRENTE', W/2, 36); canvasCtx.fillText('▼ RÉ', W/2, H-16); canvasCtx.fillText('◀ DIREITA', 70, H/2); canvasCtx.fillText('ESQUERDA ▶', W-70, H/2);
+    canvasCtx.font = 'bold 22px Arial';
+    canvasCtx.textAlign = 'center';
+    canvasCtx.fillStyle = 'rgba(255,255,255,0.85)';
+    canvasCtx.fillText('▲ FRENTE', W / 2, 36);
+    canvasCtx.fillText('▼ RÉ', W / 2, H - 16);
+    canvasCtx.fillText('◀ DIREITA', 70, H / 2);
+    canvasCtx.fillText('ESQUERDA ▶', W - 70, H / 2);
 
-    canvasCtx.save(); canvasCtx.translate(W/2, H/2); canvasCtx.scale(-1, 1); 
-    canvasCtx.font = 'bold 30px Arial'; canvasCtx.fillText('■ PARE', 0, -22); canvasCtx.restore();
+    canvasCtx.save();
+    canvasCtx.translate(W / 2, H / 2);
+    canvasCtx.scale(-1, 1); 
+    canvasCtx.fillStyle = '#ffffff';
+    canvasCtx.font = 'bold 30px Arial';
+    canvasCtx.textAlign = 'center';
+    canvasCtx.fillText('■ PARE', 0, -22);
+    canvasCtx.restore();
 
     if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
       const landmarks = results.multiHandLandmarks[0];
-      const cx = landmarks[9].x, cy = landmarks[9].y; 
-      const dx = Math.abs(cx - 0.5), dy = Math.abs(cy - 0.5);
-      
-      let zona = 'PARADO';
-      let motores: [number, number, number, number] = [0, 0, 0, 0];
 
-      if (dx < margemCentro && dy < margemCentro) {
-        zona = 'PARADO'; motores = [0, 0, 0, 0];
+      const drawConnectors = (window as any).drawConnectors;
+      const drawLandmarks = (window as any).drawLandmarks;
+      const HAND_CONNECTIONS = (window as any).HAND_CONNECTIONS;
+
+      if (drawConnectors && drawLandmarks) {
+        drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, { color: '#ffffff', lineWidth: 3 });
+        drawLandmarks(canvasCtx, landmarks, { color: '#ffff00', lineWidth: 1, radius: 5 });
+      }
+
+      const cx = landmarks[9].x; 
+      const cy = landmarks[9].y; 
+      const dx = Math.abs(cx - 0.5);
+      const dy = Math.abs(cy - 0.5);
+      const noCentro = dx < margemCentro && dy < margemCentro;
+
+      let zona: string;
+      let motores: [number, number, number, number];
+
+      // Mapeamento mantendo a sua lógica exata de sinais, limitados a 100
+      if (noCentro) {
+        zona = 'PARADO';
+        motores = [0, 0, 0, 0];
       } else if (dy > dx) {
-        if (cy < 0.5) { zona = 'FRENTE'; motores = [100, -100, 100, -100]; } 
-        else { zona = 'RÉ'; motores = [-100, 100, -100, 100]; }
+        if (cy < 0.5) {
+          zona = 'FRENTE';
+          motores = [100, -100, 100, -100];
+        } else {
+          zona = 'RÉ';
+          motores = [-100, 100, -100, 100];
+        }
       } else {
-        if (cx < 0.5) { zona = 'DIREITA'; motores = [100, 100, 100, 100]; } 
-        else { zona = 'ESQUERDA'; motores = [-100, -100, -100, -100]; }
+        if (cx < 0.5) {
+          zona = 'DIREITA';
+          motores = [100, 100, 100, 100];
+        } else {
+          zona = 'ESQUERDA';
+          motores = [-100, -100, -100, -100];
+        }
       }
 
       estadoMotores.current = motores;
       setZonaAtual(zona);
       setInfoJoystick({ speed: Math.abs(motores[0]), turn: motores[0] !== motores[1] ? 100 : 0, l: motores[0], r: motores[1] });
+
+      canvasCtx.strokeStyle = '#ffff00';
+      canvasCtx.lineWidth = 4;
+      canvasCtx.font = 'bold 40px Arial';
+      canvasCtx.fillStyle = '#ffff00';
+      canvasCtx.textAlign = 'center';
+      canvasCtx.fillText(zona, W / 2, H / 2 + 28);
+
     } else {
       estadoMotores.current = [0, 0, 0, 0];
       setZonaAtual('PARADO');
@@ -212,10 +280,13 @@ function App() {
   }, []);
 
   const processarFrameRef = useRef<() => void>(() => {});
+
   processarFrameRef.current = async () => {
     if (visaoAtivaRef.current && videoRef.current && handsRef.current) {
       if (videoRef.current.readyState >= 2) {
-        try { await handsRef.current.send({ image: videoRef.current }); } catch {}
+        try {
+          await handsRef.current.send({ image: videoRef.current });
+        } catch {}
       }
       loopVisaoRef.current = requestAnimationFrame(processarFrameRef.current);
     }
@@ -228,28 +299,42 @@ function App() {
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
-      streamRef.current = stream; videoRef.current.srcObject = stream;
-      handsRef.current = new Hands({ locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
-      handsRef.current.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
+      streamRef.current = stream;
+      videoRef.current.srcObject = stream;
+
+      handsRef.current = new Hands({
+        locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+      });
+      handsRef.current.setOptions({
+        maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7
+      });
       handsRef.current.onResults(onResultsHand);
 
       videoRef.current.onloadedmetadata = () => {
         if (videoRef.current) {
           videoRef.current.play();
           if (canvasRef.current && videoRef.current.videoWidth) {
-            canvasRef.current.width = videoRef.current.videoWidth; canvasRef.current.height = videoRef.current.videoHeight;
+            canvasRef.current.width = videoRef.current.videoWidth;
+            canvasRef.current.height = videoRef.current.videoHeight;
           }
         }
-        visaoAtivaRef.current = true; setCameraLigada(true); processarFrameRef.current();
+        visaoAtivaRef.current = true;
+        setCameraLigada(true);
+        processarFrameRef.current();
       };
-    } catch (erro) { alert("Erro na câmera."); }
+    } catch (erro) {
+      alert("Erro na câmera. Verifique se permitiu o acesso.");
+    }
   };
 
   const desligarVision = () => {
-    visaoAtivaRef.current = false; cancelAnimationFrame(loopVisaoRef.current); 
+    visaoAtivaRef.current = false;
+    cancelAnimationFrame(loopVisaoRef.current); 
     if (streamRef.current) streamRef.current.getTracks().forEach(track => track.stop());
     if (videoRef.current) videoRef.current.srcObject = null;
-    estadoMotores.current = [0, 0, 0, 0]; setCameraLigada(false); setInfoJoystick({ speed: 0, turn: 0, l: 0, r: 0 });
+    estadoMotores.current = [0, 0, 0, 0]; 
+    setCameraLigada(false);
+    setInfoJoystick({ speed: 0, turn: 0, l: 0, r: 0 });
   };
 
   useEffect(() => {
@@ -261,14 +346,9 @@ function App() {
   return (
     <div style={{ fontFamily: 'Arial', padding: '20px', textAlign: 'center', backgroundColor: '#1e1e1e', color: 'white', minHeight: '100vh' }}>
       <h1>Painel de Controle do MiniBo</h1>
-      
-      {/* 🚀 O INDICADOR DE PACOTES ESTÁ AQUI! */}
-      <p style={{ margin: 0 }}>Status do Servidor: <strong>{statusWs}</strong></p>
-      <p style={{ margin: 0, fontSize: '12px', color: '#888' }}>
-        Transmissão contínua: <span ref={contadorPacotesRef}>0</span> pacotes enviados
-      </p>
+      <p>Status do Servidor: <strong>{statusWs}</strong></p>
 
-      <div style={{ marginBottom: '20px', marginTop: '15px' }}>
+      <div style={{ marginBottom: '20px' }}>
         <button onClick={() => setAbaAtiva('voz')} style={{ padding: '10px 20px', marginRight: '10px', backgroundColor: abaAtiva === 'voz' ? '#007bff' : '#444', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>🗣️ Comando de Voz</button>
         <button onClick={() => setAbaAtiva('visao')} style={{ padding: '10px 20px', backgroundColor: abaAtiva === 'visao' ? '#007bff' : '#444', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>👁️ Visão Computacional</button>
       </div>
@@ -312,6 +392,9 @@ function App() {
                 <p style={{ margin: 0 }}>Motor Esq: {infoJoystick.l}</p>
                 <p style={{ margin: 0 }}>Motor Dir: {infoJoystick.r}</p>
               </div>
+            )}
+            {cameraLigada && (
+              <div style={{ position: 'absolute', top: '50%', left: '50%', width: '12px', height: '12px', backgroundColor: 'red', borderRadius: '50%', transform: 'translate(-50%, -50%)', opacity: 0.6, zIndex: 15 }} />
             )}
           </div>
         </div>
