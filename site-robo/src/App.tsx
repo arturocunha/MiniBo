@@ -169,68 +169,141 @@ function App() {
   // 3. VISÃO COMPUTACIONAL — CORREÇÃO DO LOOP E DO CANVAS
   // =========================================================================
 
-  // CORREÇÃO: onResultsHand como useCallback para evitar referências obsoletas
+  const [zonaAtual, setZonaAtual] = useState<string>('PARADO');
+
+  // Divide a tela em 4 zonas:
+  //   CIMA    (y < 0.5 e |y-0.5| > |x-0.5|) → FRENTE
+  //   BAIXO   (y > 0.5 e |y-0.5| > |x-0.5|) → RÉ
+  //   DIREITA (x > 0.5 e |x-0.5| >= |y-0.5|) → DIREITA
+  //   ESQUERDA(x < 0.5 e |x-0.5| >= |y-0.5|) → ESQUERDA
+  // Os valores dos motores são idênticos aos do comando de voz.
   const onResultsHand = useCallback((results: any) => {
     if (!canvasRef.current || !videoRef.current || !visaoAtivaRef.current) return;
 
-    const canvasCtx = canvasRef.current.getContext('2d');
+    const canvas = canvasRef.current;
+    const vid = videoRef.current;
+    const canvasCtx = canvas.getContext('2d');
     if (!canvasCtx) return;
 
-    // CORREÇÃO: sincroniza dimensões do canvas com o vídeo real
-    const vid = videoRef.current;
+    // Sincroniza dimensões
     if (vid.videoWidth && vid.videoHeight) {
-      if (canvasRef.current.width !== vid.videoWidth) {
-        canvasRef.current.width = vid.videoWidth;
-        canvasRef.current.height = vid.videoHeight;
+      if (canvas.width !== vid.videoWidth) {
+        canvas.width = vid.videoWidth;
+        canvas.height = vid.videoHeight;
       }
     }
 
-    canvasCtx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+    const W = canvas.width;
+    const H = canvas.height;
+
+    canvasCtx.clearRect(0, 0, W, H);
+
+    // Desenha as 4 zonas coloridas com transparência
+    // CIMA = azul, BAIXO = vermelho, ESQUERDA = laranja, DIREITA = verde
+    // Como o vídeo está espelhado (scaleX(-1)), as zonas visuais também ficam espelhadas.
+    // Esquerda na tela = mão à direita do usuário → comando DIREITA (correto para câmera espelhada)
+    canvasCtx.globalAlpha = 0.18;
+    // CIMA
+    canvasCtx.fillStyle = '#00aaff';
+    canvasCtx.beginPath();
+    canvasCtx.moveTo(0, 0); canvasCtx.lineTo(W, 0);
+    canvasCtx.lineTo(W / 2, H / 2); canvasCtx.lineTo(0, 0);
+    canvasCtx.moveTo(W, 0); canvasCtx.lineTo(W / 2, H / 2); canvasCtx.lineTo(W, 0);
+    canvasCtx.fillRect(0, 0, W, H / 2); // fallback simples
+    // Triângulo CIMA
+    canvasCtx.fillStyle = '#00aaff';
+    canvasCtx.beginPath();
+    canvasCtx.moveTo(0, 0); canvasCtx.lineTo(W, 0); canvasCtx.lineTo(W / 2, H / 2);
+    canvasCtx.fill();
+    // Triângulo BAIXO
+    canvasCtx.fillStyle = '#ff3333';
+    canvasCtx.beginPath();
+    canvasCtx.moveTo(0, H); canvasCtx.lineTo(W, H); canvasCtx.lineTo(W / 2, H / 2);
+    canvasCtx.fill();
+    // Triângulo ESQUERDA (lado esquerdo da tela = lado direito real por causa do espelho)
+    canvasCtx.fillStyle = '#ff9900';
+    canvasCtx.beginPath();
+    canvasCtx.moveTo(0, 0); canvasCtx.lineTo(0, H); canvasCtx.lineTo(W / 2, H / 2);
+    canvasCtx.fill();
+    // Triângulo DIREITA
+    canvasCtx.fillStyle = '#00cc44';
+    canvasCtx.beginPath();
+    canvasCtx.moveTo(W, 0); canvasCtx.lineTo(W, H); canvasCtx.lineTo(W / 2, H / 2);
+    canvasCtx.fill();
+    canvasCtx.globalAlpha = 1.0;
+
+    // Labels das zonas
+    canvasCtx.font = 'bold 22px Arial';
+    canvasCtx.textAlign = 'center';
+    canvasCtx.fillStyle = 'rgba(255,255,255,0.85)';
+    canvasCtx.fillText('▲ FRENTE', W / 2, 36);
+    canvasCtx.fillText('▼ RÉ', W / 2, H - 16);
+    // Espelhado: o label esquerdo da tela corresponde ao lado direito real
+    canvasCtx.fillText('◀ DIREITA', 70, H / 2);
+    canvasCtx.fillText('ESQUERDA ▶', W - 70, H / 2);
 
     if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
       const landmarks = results.multiHandLandmarks[0];
-        
+
       const drawConnectors = (window as any).drawConnectors;
       const drawLandmarks = (window as any).drawLandmarks;
       const HAND_CONNECTIONS = (window as any).HAND_CONNECTIONS;
 
       if (drawConnectors && drawLandmarks) {
-        drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, { color: '#00FF00', lineWidth: 3 });
-        drawLandmarks(canvasCtx, landmarks, { color: '#FF0000', lineWidth: 1, radius: 4 });
+        drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, { color: '#ffffff', lineWidth: 3 });
+        drawLandmarks(canvasCtx, landmarks, { color: '#ffff00', lineWidth: 1, radius: 5 });
       }
 
-      const centroDaMao = landmarks[9]; 
-      const eixoX = centroDaMao.x - 0.5; 
-      const eixoY = centroDaMao.y - 0.5; 
+      // Ponto 9 = centro da palma
+      const cx = landmarks[9].x; // 0 = esquerda da imagem, 1 = direita
+      const cy = landmarks[9].y; // 0 = topo, 1 = base
 
-      const forward_speed = Math.max(-100, Math.min(100, eixoY * -200));
-      const turn_speed = Math.max(-100, Math.min(100, eixoX * 200));
+      const dx = Math.abs(cx - 0.5);
+      const dy = Math.abs(cy - 0.5);
 
-      const deadzone = 20; 
-      const speed_filtered = Math.abs(forward_speed) < deadzone ? 0 : forward_speed;
-      const turn_filtered = Math.abs(turn_speed) < deadzone ? 0 : turn_speed;
+      let zona: string;
+      let motores: [number, number, number, number];
 
-      let motorEsq = speed_filtered + turn_filtered;
-      let motorDir = speed_filtered - turn_filtered;
-
-      const max_raw = Math.max(Math.abs(motorEsq), Math.abs(motorDir));
-      if (max_raw > 100) {
-        motorEsq = (motorEsq / max_raw) * 100;
-        motorDir = (motorDir / max_raw) * 100;
+      if (dy > dx) {
+        if (cy < 0.5) {
+          // Mão no topo → FRENTE
+          zona = 'FRENTE';
+          motores = [180, -180, 180, -180];
+        } else {
+          // Mão embaixo → RÉ
+          zona = 'RÉ';
+          motores = [-180, 180, -180, 180];
+        }
+      } else {
+        // Vídeo espelhado: cx=0 é o lado direito real do usuário
+        if (cx < 0.5) {
+          // Lado esquerdo da imagem = lado direito do usuário → DIREITA
+          zona = 'DIREITA';
+          motores = [180, 180, 180, 180];
+        } else {
+          // Lado direito da imagem = lado esquerdo do usuário → ESQUERDA
+          zona = 'ESQUERDA';
+          motores = [-180, -180, -180, -180];
+        }
       }
 
-      setInfoJoystick({ speed: Math.round(speed_filtered), turn: Math.round(turn_filtered), l: Math.round(motorEsq), r: Math.round(motorDir) });
-      
-      estadoMotores.current = [
-        Math.round(motorEsq), 
-        Math.round(motorDir), 
-        Math.round(motorEsq), 
-        Math.round(motorDir)
-      ];
-      
+      estadoMotores.current = motores;
+      setZonaAtual(zona);
+      setInfoJoystick({ speed: motores[0], turn: motores[1], l: motores[0], r: motores[1] });
+
+      // Destaca a zona ativa com borda luminosa
+      canvasCtx.strokeStyle = '#ffff00';
+      canvasCtx.lineWidth = 4;
+      canvasCtx.font = 'bold 40px Arial';
+      canvasCtx.fillStyle = '#ffff00';
+      canvasCtx.textAlign = 'center';
+      canvasCtx.fillText(zona, W / 2, H / 2 + 14);
+
     } else {
-      setInfoJoystick({ speed: 0, turn: 0, l: 0, r: 0 });
+      // Sem mão detectada → para
       estadoMotores.current = [0, 0, 0, 0];
+      setZonaAtual('PARADO');
+      setInfoJoystick({ speed: 0, turn: 0, l: 0, r: 0 });
     }
   }, []);
 
@@ -348,10 +421,9 @@ function App() {
             <video ref={videoRef} playsInline muted style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }} />
             <canvas ref={canvasRef} width="640" height="480" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 10, transform: 'scaleX(-1)' }} />
             {cameraLigada && (
-              <div style={{ position: 'absolute', bottom: '20px', left: '20px', backgroundColor: 'rgba(0,0,0,0.7)', padding: '10px', borderRadius: '5px', textAlign: 'left', fontSize: '14px', color: '#0f0', zIndex: 20 }}>
-                <p style={{ margin: 0 }}>Velocidade: {infoJoystick.speed}%</p>
-                <p style={{ margin: 0 }}>Curva: {infoJoystick.turn}%</p>
-                <hr style={{ borderColor: '#333', margin: '5px 0' }} />
+              <div style={{ position: 'absolute', bottom: '20px', left: '20px', backgroundColor: 'rgba(0,0,0,0.75)', padding: '10px 14px', borderRadius: '8px', textAlign: 'left', fontSize: '14px', color: '#0f0', zIndex: 20 }}>
+                <p style={{ margin: 0, fontWeight: 'bold', color: zonaAtual === 'PARADO' ? '#dc3545' : '#ffff00', fontSize: '18px' }}>⬛ {zonaAtual}</p>
+                <hr style={{ borderColor: '#444', margin: '6px 0' }} />
                 <p style={{ margin: 0 }}>Motor Esq: {infoJoystick.l}</p>
                 <p style={{ margin: 0 }}>Motor Dir: {infoJoystick.r}</p>
               </div>
