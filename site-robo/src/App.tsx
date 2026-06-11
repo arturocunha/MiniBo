@@ -232,15 +232,28 @@ function App() {
     canvasCtx.fill();
     canvasCtx.globalAlpha = 1.0;
 
-    // Labels das zonas
+    // Labels das zonas — canvas NÃO está espelhado, então esq/dir são diretos
     canvasCtx.font = 'bold 22px Arial';
     canvasCtx.textAlign = 'center';
     canvasCtx.fillStyle = 'rgba(255,255,255,0.85)';
     canvasCtx.fillText('▲ FRENTE', W / 2, 36);
     canvasCtx.fillText('▼ RÉ', W / 2, H - 16);
-    // Espelhado: o label esquerdo da tela corresponde ao lado direito real
-    canvasCtx.fillText('◀ DIREITA', 70, H / 2);
-    canvasCtx.fillText('ESQUERDA ▶', W - 70, H / 2);
+    // Vídeo espelhado + canvas não-espelhado: lado esquerdo da tela = mão direita real
+    // Para o usuário olhando a câmera como espelho: mover mão p/ SUA esquerda = esquerda na tela
+    canvasCtx.fillText('◀ ESQUERDA', 72, H / 2);
+    canvasCtx.fillText('DIREITA ▶', W - 72, H / 2);
+
+    // Zona neutra central (círculo cinza)
+    const DEADZONE_R = 0.12; // raio normalizado
+    canvasCtx.globalAlpha = 0.55;
+    canvasCtx.fillStyle = '#111111';
+    canvasCtx.beginPath();
+    canvasCtx.arc(W / 2, H / 2, DEADZONE_R * Math.min(W, H), 0, Math.PI * 2);
+    canvasCtx.fill();
+    canvasCtx.globalAlpha = 1.0;
+    canvasCtx.font = 'bold 13px Arial';
+    canvasCtx.fillStyle = 'rgba(180,180,180,0.8)';
+    canvasCtx.fillText('PARAR', W / 2, H / 2 + 5);
 
     if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
       const landmarks = results.multiHandLandmarks[0];
@@ -255,8 +268,11 @@ function App() {
       }
 
       // Ponto 9 = centro da palma
-      const cx = landmarks[9].x; // 0 = esquerda da imagem, 1 = direita
-      const cy = landmarks[9].y; // 0 = topo, 1 = base
+      // O MediaPipe retorna x no espaço da imagem original (não espelhada).
+      // Como o vídeo está espelhado na tela, espelhamos o x para alinhar
+      // a posição visual da mão com a zona correta no canvas não-espelhado.
+      const cx = 1 - landmarks[9].x; // espelha X para coincidir com o espelho do vídeo
+      const cy = landmarks[9].y;
 
       const dx = Math.abs(cx - 0.5);
       const dy = Math.abs(cy - 0.5);
@@ -264,26 +280,27 @@ function App() {
       let zona: string;
       let motores: [number, number, number, number];
 
-      if (dy > dx) {
+      // Zona neutra: dentro do círculo central
+      if (dx < DEADZONE_R && dy < DEADZONE_R &&
+          Math.sqrt(dx * dx + dy * dy) < DEADZONE_R) {
+        zona = 'PARADO';
+        motores = [90, 90, 90, 90];
+      } else if (dy > dx) {
         if (cy < 0.5) {
-          // Mão no topo → FRENTE
           zona = 'FRENTE';
           motores = [180, -180, 180, -180];
         } else {
-          // Mão embaixo → RÉ
           zona = 'RÉ';
           motores = [-180, 180, -180, 180];
         }
       } else {
-        // Vídeo espelhado: cx=0 é o lado direito real do usuário
         if (cx < 0.5) {
-          // Lado esquerdo da imagem = lado direito do usuário → DIREITA
-          zona = 'DIREITA';
-          motores = [180, 180, 180, 180];
-        } else {
-          // Lado direito da imagem = lado esquerdo do usuário → ESQUERDA
+          // Lado esquerdo da tela (após espelhar) = esquerda real do usuário
           zona = 'ESQUERDA';
           motores = [-180, -180, -180, -180];
+        } else {
+          zona = 'DIREITA';
+          motores = [180, 180, 180, 180];
         }
       }
 
@@ -291,11 +308,9 @@ function App() {
       setZonaAtual(zona);
       setInfoJoystick({ speed: motores[0], turn: motores[1], l: motores[0], r: motores[1] });
 
-      // Destaca a zona ativa com borda luminosa
-      canvasCtx.strokeStyle = '#ffff00';
-      canvasCtx.lineWidth = 4;
+      // Nome da zona ativa no centro
       canvasCtx.font = 'bold 40px Arial';
-      canvasCtx.fillStyle = '#ffff00';
+      canvasCtx.fillStyle = zona === 'PARADO' ? '#aaaaaa' : '#ffff00';
       canvasCtx.textAlign = 'center';
       canvasCtx.fillText(zona, W / 2, H / 2 + 14);
 
@@ -419,7 +434,7 @@ function App() {
           <br />
           <div style={{ position: 'relative', width: '640px', height: '480px', margin: '0 auto', border: cameraLigada ? '3px solid #28a745' : '3px solid #555', borderRadius: '10px', backgroundColor: '#000', overflow: 'hidden' }}>
             <video ref={videoRef} playsInline muted style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }} />
-            <canvas ref={canvasRef} width="640" height="480" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 10, transform: 'scaleX(-1)' }} />
+            <canvas ref={canvasRef} width="640" height="480" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 10 }} />
             {cameraLigada && (
               <div style={{ position: 'absolute', bottom: '20px', left: '20px', backgroundColor: 'rgba(0,0,0,0.75)', padding: '10px 14px', borderRadius: '8px', textAlign: 'left', fontSize: '14px', color: '#0f0', zIndex: 20 }}>
                 <p style={{ margin: 0, fontWeight: 'bold', color: zonaAtual === 'PARADO' ? '#dc3545' : '#ffff00', fontSize: '18px' }}>⬛ {zonaAtual}</p>
