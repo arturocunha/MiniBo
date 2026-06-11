@@ -3,7 +3,7 @@ import './App.css';
 
 function App() {
   // =========================================================================
-  // ⚙️ MATRIZ DE CALIBRAÇÃO INDEPENDENTE DOS MOTORES (Mude para 1 ou -1)
+  // ⚙️ MATRIZ DE CALIBRAÇÃO INDEPENDENTE DOS MOTORES
   // =========================================================================
   const MULT_FFE = 1; // Frente-Frente-Esquerda (Pino 5)
   const MULT_FFD = 1; // Frente-Frente-Direita  (Pino 6)
@@ -35,16 +35,10 @@ function App() {
   const estadoMotores = useRef<[number, number, number, number]>([0, 0, 0, 0]);
 
   // =========================================================================
-  // 1. LIGAÇÃO WEBSOCKET E TRANSMISSÃO CONTÍNUA CRONOMETRADA
+  // 1. LIGAÇÃO WEBSOCKET E TRANSMISSÃO CONTÍNUA (HEARTBEAT)
   // =========================================================================
   useEffect(() => {
-    // CORREÇÃO: Conecta diretamente ao servidor WebSocket (server.js)
-    // Se estiver rodando em produção (porta 3000), usa o mesmo host
-    // Se estiver em dev (Vite na porta 5173), aponta para a porta do servidor
     const protocoloWs = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    
-    // Em desenvolvimento o Vite roda na 5173 e o server.js na 3000
-    // Em produção ambos estão na mesma porta (3000)
     const host = window.location.hostname;
     const porta = window.location.port === '5173' ? '3000' : window.location.port;
     const urlWs = `${protocoloWs}//${host}:${porta}`;
@@ -54,7 +48,6 @@ function App() {
       ws.current.onopen = () => setStatusWs('Ligado 🟢');
       ws.current.onclose = () => {
         setStatusWs('Desligado 🔴');
-        // Tenta reconectar após 3 segundos
         setTimeout(conectar, 3000);
       };
       ws.current.onerror = () => setStatusWs('Erro na ligação ⚠️');
@@ -62,6 +55,7 @@ function App() {
 
     conectar();
 
+    // ESTE É O CORAÇÃO: Envia o comando atual o tempo todo para a ESP32
     const transmissor = setInterval(() => {
       if (ws.current && ws.current.readyState === WebSocket.OPEN) {
         const [ffe, ffd, fte, ftd] = estadoMotores.current;
@@ -85,7 +79,7 @@ function App() {
   }, []);
 
   // =========================================================================
-  // 2. COMANDO DE VOZ — MANTÉM ESTADO (não para ao silenciar)
+  // 2. COMANDO DE VOZ — COM OS SINAIS FÍSICOS EXATOS
   // =========================================================================
   useEffect(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -104,47 +98,29 @@ function App() {
         const fala = event.results[lastIndex][0].transcript.toLowerCase().trim();
         setFraseOuvida(fala);
         
-        // CORREÇÃO DOS MAPEAMENTOS:
-        // Frente  = todos os motores positivos → robô vai para frente
-        // Trás    = todos os motores negativos → robô vai para trás
-        // Esquerda = motores esquerdos negativos, direitos positivos → gira à esquerda
-        // Direita  = motores esquerdos positivos, direitos negativos → gira à direita
-        //
-        // Layout dos motores: [FFE, FFD, FTE, FTD]
-        //   FFE/FTE = lado Esquerdo
-        //   FFD/FTD = lado Direito
-
-        if (/\b(frente|avançar|avançar|vai)\b/.test(fala)) { 
+        // Mapeamento mantendo a sua lógica exata de sinais, limitados a 100
+        if (/\b(frente|avançar|vai)\b/.test(fala)) { 
           setComandoAtualVoz("FRENTE");
-          // CORREÇÃO: mantém rodando continuamente — não para até receber outro comando
-          estadoMotores.current = [180, -180, 180, -180]; 
+          estadoMotores.current = [100, -100, 100, -100]; 
         } 
         else if (/\b(esquerda|left)\b/.test(fala)) { 
           setComandoAtualVoz("ESQUERDA");
-          // Esquerda: motor esq para trás (-), motor dir para frente (+)
-          estadoMotores.current = [-180, -180, -180, -180]; 
+          estadoMotores.current = [-100, -100, -100, -100]; 
         } 
         else if (/\b(direita|right)\b/.test(fala)) { 
           setComandoAtualVoz("DIREITA");
-          // Direita: motor esq para frente (+), motor dir para trás (-)
-          estadoMotores.current = [180, 180, 180, 180]; 
+          estadoMotores.current = [100, 100, 100, 100]; 
         } 
         else if (/\b(tr[aász]|r[eé]|recuar)\b/.test(fala)) { 
           setComandoAtualVoz("TRÁS");
-          estadoMotores.current = [-180, 180, -180, 180]; 
+          estadoMotores.current = [-100, 100, -100, 100]; 
         } 
         else if (/\b(para|pare|parar|stop)\b/.test(fala)) { 
           setComandoAtualVoz("PARADO");
-          // CORREÇÃO DA PARADA: envia 0,0,0,0 -> a ESP coloca os 4 servos
-          // exatamente no ponto-morto (90°). Antes era 90,90,90,90, que a ESP
-          // interpretava como ~171° e fazia algumas rodas continuarem girando.
           estadoMotores.current = [0, 0, 0, 0]; 
         }
-        // NOTA: Se a palavra não for reconhecida, o estado anterior é MANTIDO.
-        // Isso garante que "frente" continue indo pra frente até ouvir outro comando.
       };
 
-      // CORREÇÃO: reinicia automaticamente para manter escuta contínua
       recognitionRef.current.onend = () => { 
         if (ouvindoRef.current) recognitionRef.current.start(); 
       };
@@ -157,7 +133,6 @@ function App() {
       ouvindoRef.current = false; 
       setOuvindoVoz(false); 
       recognitionRef.current.stop(); 
-      // Para os motores ao desligar o microfone
       estadoMotores.current = [0, 0, 0, 0];
       setComandoAtualVoz("PARADO"); 
       setFraseOuvida('');
@@ -169,17 +144,10 @@ function App() {
   };
 
   // =========================================================================
-  // 3. VISÃO COMPUTACIONAL — CORREÇÃO DO LOOP E DO CANVAS
+  // 3. VISÃO COMPUTACIONAL — COM OS SINAIS FÍSICOS EXATOS
   // =========================================================================
-
   const [zonaAtual, setZonaAtual] = useState<string>('PARADO');
 
-  // Divide a tela em 4 zonas triangulares + 1 QUADRADO CENTRAL de PARADA:
-  //   QUADRADO CENTRAL        → PARAR (0,0,0,0)
-  //   CIMA    (topo)          → FRENTE
-  //   BAIXO   (rodapé)        → RÉ
-  //   DIREITA / ESQUERDA      → curvas pivotadas
-  // Os valores dos motores de movimento são idênticos aos do comando de voz.
   const onResultsHand = useCallback((results: any) => {
     if (!canvasRef.current || !videoRef.current || !visaoAtivaRef.current) return;
 
@@ -188,7 +156,6 @@ function App() {
     const canvasCtx = canvas.getContext('2d');
     if (!canvasCtx) return;
 
-    // Sincroniza dimensões
     if (vid.videoWidth && vid.videoHeight) {
       if (canvas.width !== vid.videoWidth) {
         canvas.width = vid.videoWidth;
@@ -201,39 +168,25 @@ function App() {
 
     canvasCtx.clearRect(0, 0, W, H);
 
-    // ---------------------------------------------------------------------
-    // Desenha as 4 zonas triangulares (a partir do centro) com transparência
-    // CIMA = azul, BAIXO = vermelho, ESQUERDA = laranja, DIREITA = verde
-    // Como o vídeo está espelhado (scaleX(-1)), as zonas visuais também ficam
-    // espelhadas: o lado esquerdo da tela = lado direito real do usuário.
-    // ---------------------------------------------------------------------
     canvasCtx.globalAlpha = 0.18;
-    // Triângulo CIMA (FRENTE)
     canvasCtx.fillStyle = '#00aaff';
     canvasCtx.beginPath();
     canvasCtx.moveTo(0, 0); canvasCtx.lineTo(W, 0); canvasCtx.lineTo(W / 2, H / 2);
     canvasCtx.fill();
-    // Triângulo BAIXO (RÉ)
     canvasCtx.fillStyle = '#ff3333';
     canvasCtx.beginPath();
     canvasCtx.moveTo(0, H); canvasCtx.lineTo(W, H); canvasCtx.lineTo(W / 2, H / 2);
     canvasCtx.fill();
-    // Triângulo ESQUERDA da imagem (= DIREITA real por causa do espelho)
     canvasCtx.fillStyle = '#ff9900';
     canvasCtx.beginPath();
     canvasCtx.moveTo(0, 0); canvasCtx.lineTo(0, H); canvasCtx.lineTo(W / 2, H / 2);
     canvasCtx.fill();
-    // Triângulo DIREITA da imagem (= ESQUERDA real)
     canvasCtx.fillStyle = '#00cc44';
     canvasCtx.beginPath();
     canvasCtx.moveTo(W, 0); canvasCtx.lineTo(W, H); canvasCtx.lineTo(W / 2, H / 2);
     canvasCtx.fill();
     canvasCtx.globalAlpha = 1.0;
 
-    // ---------------------------------------------------------------------
-    // QUADRADO CENTRAL DE PARADA
-    // margemCentro = metade do lado do quadrado, em fração da tela (0 a 0.5)
-    // ---------------------------------------------------------------------
     const margemCentro = 0.18;
     const sqX = (0.5 - margemCentro) * W;
     const sqY = (0.5 - margemCentro) * H;
@@ -248,20 +201,17 @@ function App() {
     canvasCtx.lineWidth = 3;
     canvasCtx.strokeRect(sqX, sqY, sqLargura, sqAltura);
 
-    // Labels das zonas (mantidos como no original)
     canvasCtx.font = 'bold 22px Arial';
     canvasCtx.textAlign = 'center';
     canvasCtx.fillStyle = 'rgba(255,255,255,0.85)';
     canvasCtx.fillText('▲ FRENTE', W / 2, 36);
     canvasCtx.fillText('▼ RÉ', W / 2, H - 16);
-    // Espelhado: o label esquerdo da tela corresponde ao lado direito real
     canvasCtx.fillText('◀ DIREITA', 70, H / 2);
     canvasCtx.fillText('ESQUERDA ▶', W - 70, H / 2);
 
-    // Texto "PARE" dentro do quadrado — des-espelhado para ficar legível
     canvasCtx.save();
     canvasCtx.translate(W / 2, H / 2);
-    canvasCtx.scale(-1, 1); // desfaz o scaleX(-1) do canvas só para este texto
+    canvasCtx.scale(-1, 1); 
     canvasCtx.fillStyle = '#ffffff';
     canvasCtx.font = 'bold 30px Arial';
     canvasCtx.textAlign = 'center';
@@ -280,51 +230,41 @@ function App() {
         drawLandmarks(canvasCtx, landmarks, { color: '#ffff00', lineWidth: 1, radius: 5 });
       }
 
-      // Ponto 9 = centro da palma
-      const cx = landmarks[9].x; // 0 = esquerda da imagem, 1 = direita
-      const cy = landmarks[9].y; // 0 = topo, 1 = base
-
+      const cx = landmarks[9].x; 
+      const cy = landmarks[9].y; 
       const dx = Math.abs(cx - 0.5);
       const dy = Math.abs(cy - 0.5);
-
-      // A mão está dentro do quadrado central?
       const noCentro = dx < margemCentro && dy < margemCentro;
 
       let zona: string;
       let motores: [number, number, number, number];
 
+      // Mapeamento mantendo a sua lógica exata de sinais, limitados a 100
       if (noCentro) {
-        // Mão no quadrado central → PARAR (todos no ponto-morto)
         zona = 'PARADO';
         motores = [0, 0, 0, 0];
       } else if (dy > dx) {
         if (cy < 0.5) {
-          // Mão no topo → FRENTE
           zona = 'FRENTE';
-          motores = [180, -180, 180, -180];
+          motores = [100, -100, 100, -100];
         } else {
-          // Mão embaixo → RÉ
           zona = 'RÉ';
-          motores = [-180, 180, -180, 180];
+          motores = [-100, 100, -100, 100];
         }
       } else {
-        // Vídeo espelhado: cx=0 é o lado direito real do usuário
         if (cx < 0.5) {
-          // Lado esquerdo da imagem = lado direito do usuário → DIREITA
           zona = 'DIREITA';
-          motores = [180, 180, 180, 180];
+          motores = [100, 100, 100, 100];
         } else {
-          // Lado direito da imagem = lado esquerdo do usuário → ESQUERDA
           zona = 'ESQUERDA';
-          motores = [-180, -180, -180, -180];
+          motores = [-100, -100, -100, -100];
         }
       }
 
       estadoMotores.current = motores;
       setZonaAtual(zona);
-      setInfoJoystick({ speed: motores[0], turn: motores[1], l: motores[0], r: motores[1] });
+      setInfoJoystick({ speed: Math.abs(motores[0]), turn: motores[0] !== motores[1] ? 100 : 0, l: motores[0], r: motores[1] });
 
-      // Destaca a zona ativa com o nome no centro
       canvasCtx.strokeStyle = '#ffff00';
       canvasCtx.lineWidth = 4;
       canvasCtx.font = 'bold 40px Arial';
@@ -333,25 +273,20 @@ function App() {
       canvasCtx.fillText(zona, W / 2, H / 2 + 28);
 
     } else {
-      // Sem mão detectada → para
       estadoMotores.current = [0, 0, 0, 0];
       setZonaAtual('PARADO');
       setInfoJoystick({ speed: 0, turn: 0, l: 0, r: 0 });
     }
   }, []);
 
-  // CORREÇÃO: processarFrame usa referência estável via ref
   const processarFrameRef = useRef<() => void>(() => {});
 
   processarFrameRef.current = async () => {
     if (visaoAtivaRef.current && videoRef.current && handsRef.current) {
-      // Só processa se o vídeo tiver dados reais
       if (videoRef.current.readyState >= 2) {
         try {
           await handsRef.current.send({ image: videoRef.current });
-        } catch {
-          // ignora erros de frame
-        }
+        } catch {}
       }
       loopVisaoRef.current = requestAnimationFrame(processarFrameRef.current);
     }
@@ -367,20 +302,17 @@ function App() {
       streamRef.current = stream;
       videoRef.current.srcObject = stream;
 
-      // CORREÇÃO: recria o objeto Hands se necessário para garantir callback atualizado
       handsRef.current = new Hands({
         locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
       });
       handsRef.current.setOptions({
         maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7
       });
-      // CORREÇÃO: usa o callback estável do useCallback
       handsRef.current.onResults(onResultsHand);
 
       videoRef.current.onloadedmetadata = () => {
         if (videoRef.current) {
           videoRef.current.play();
-          // Sincroniza tamanho do canvas com o vídeo real
           if (canvasRef.current && videoRef.current.videoWidth) {
             canvasRef.current.width = videoRef.current.videoWidth;
             canvasRef.current.height = videoRef.current.videoHeight;
