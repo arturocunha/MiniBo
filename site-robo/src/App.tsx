@@ -5,13 +5,12 @@ function App() {
   // =========================================================================
   // ⚙️ MATRIZ DE CALIBRAÇÃO INDEPENDENTE DOS MOTORES
   // =========================================================================
-  const MULT_FFE = 1; // Frente-Frente-Esquerda (Pino 5)
-  const MULT_FFD = 1; // Frente-Frente-Direita  (Pino 6)
-  const MULT_FTE = 1; // Frente-Trás-Esquerda   (Pino 7)
-  const MULT_FTD = 1; // Frente-Trás-Direita    (Pino 8)
+  const MULT_FFE = 1; 
+  const MULT_FFD = 1; 
+  const MULT_FTE = 1; 
+  const MULT_FTD = 1; 
 
-  // Adicionamos a aba 'manual'
-  const [abaAtiva, setAbaAtiva] = useState<'voz' | 'visao' | 'manual'>('voz');
+  const [abaAtiva, setAbaAtiva] = useState<'voz' | 'visao' | 'manual'>('manual'); // Já abre na aba manual para você testar
   const [statusWs, setStatusWs] = useState('A ligar...');
   
   const [comandoAtualVoz, setComandoAtualVoz] = useState('PARADO');
@@ -20,9 +19,6 @@ function App() {
   
   const [cameraLigada, setCameraLigada] = useState(false); 
   const [infoJoystick, setInfoJoystick] = useState({ speed: 0, turn: 0, l: 0, r: 0 });
-
-  // Estados do Joystick Virtual na tela
-  const [posicaoJoy, setPosicaoJoy] = useState({ x: 0, y: 0 });
 
   const ws = useRef<WebSocket | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -36,12 +32,11 @@ function App() {
   const recognitionRef = useRef<any>(null); 
   const ouvindoRef = useRef(false); 
   
+  // A MEMÓRIA DE ESTADO: O que estiver aqui, o robô faz.
   const estadoMotores = useRef<[number, number, number, number]>([0, 0, 0, 0]);
-
-  // Controles do Modo Manual (Teclado e Tela)
-  const teclasRef = useRef({ w: false, a: false, s: false, d: false });
-  const joyAtivoRef = useRef(false);
-  const areaJoyRef = useRef<HTMLDivElement>(null);
+  
+  // Controle de estado para mostrar na tela qual botão está pressionado
+  const [direcaoManual, setDirecaoManual] = useState('PARADO');
 
   // =========================================================================
   // 1. LIGAÇÃO WEBSOCKET E TRANSMISSÃO CONTÍNUA (HEARTBEAT)
@@ -64,11 +59,11 @@ function App() {
 
     conectar();
 
-    // Coração do Robô: Envia a matriz de motores atual 10 vezes por segundo
+    // O CORAÇÃO DO ROBÔ: Metralha o comando 10 vezes por segundo.
+    // Se o dedo estiver no botão, metralha movimento. Se soltar, metralha zeros.
     const transmissor = setInterval(() => {
       if (ws.current && ws.current.readyState === WebSocket.OPEN) {
         const [ffe, ffd, fte, ftd] = estadoMotores.current;
-        
         const cmdFinal = [
           ffe * MULT_FFE,
           ffd * MULT_FFD,
@@ -87,58 +82,36 @@ function App() {
   }, []);
 
   // =========================================================================
-  // 2. MODO MANUAL (TECLADO WASD + JOYSTICK VIRTUAL)
+  // 2. MODO MANUAL: BOTÕES DE APERTAR E SEGURAR (À PROVA DE FALHAS)
   // =========================================================================
-  const atualizarMotoresManual = useCallback((joyX = 0, joyY = 0) => {
-    let speed = 0;
-    let turn = 0;
+  const pressionarBotao = (direcao: string) => {
+    setDirecaoManual(direcao);
+    if (direcao === 'FRENTE')   estadoMotores.current = [100, -100, 100, -100];
+    if (direcao === 'TRAS')     estadoMotores.current = [-100, 100, -100, 100];
+    if (direcao === 'ESQUERDA') estadoMotores.current = [-100, -100, -100, -100];
+    if (direcao === 'DIREITA')  estadoMotores.current = [100, 100, 100, 100];
+  };
 
-    // Se o usuário estiver com o dedo no joystick, ele tem prioridade
-    if (joyAtivoRef.current) {
-      speed = -joyY; // Eixo Y no navegador é positivo para baixo, invertemos para acelerar
-      turn = joyX;
-    } else {
-      // Senão, lê as teclas WASD
-      speed = (teclasRef.current.w ? 100 : 0) + (teclasRef.current.s ? -100 : 0);
-      turn = (teclasRef.current.d ? 100 : 0) + (teclasRef.current.a ? -100 : 0);
-    }
+  const soltarBotao = () => {
+    setDirecaoManual('PARADO');
+    estadoMotores.current = [0, 0, 0, 0];
+  };
 
-    // A Mágica do "Differential Steering" (Direção de Tanque)
-    // Esquerda = Velocidade + Curva  | Direita = -Velocidade + Curva
-    // Isso garante exatamente os mesmos sinais elétricos do modo de voz.
-    let mEsq = speed + turn;
-    let mDir = -speed + turn;
-
-    // Se bater os botões juntos e passar de 100%, normalizamos
-    const max = Math.max(Math.abs(mEsq), Math.abs(mDir));
-    if (max > 100) {
-      mEsq = (mEsq / max) * 100;
-      mDir = (mDir / max) * 100;
-    }
-
-    estadoMotores.current = [Math.round(mEsq), Math.round(mDir), Math.round(mEsq), Math.round(mDir)];
-  }, []);
-
+  // Suporte ao Teclado (WASD) mantido caso queira usar no PC
   useEffect(() => {
-    if (abaAtiva !== 'manual') {
-      teclasRef.current = { w: false, a: false, s: false, d: false };
-      return;
-    }
+    if (abaAtiva !== 'manual') return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
       const key = e.key.toLowerCase();
-      if (['w', 'a', 's', 'd'].includes(key)) {
-        teclasRef.current[key as keyof typeof teclasRef.current] = true;
-        atualizarMotoresManual();
-      }
+      if (key === 'w') pressionarBotao('FRENTE');
+      if (key === 's') pressionarBotao('TRAS');
+      if (key === 'a') pressionarBotao('ESQUERDA');
+      if (key === 'd') pressionarBotao('DIREITA');
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
       const key = e.key.toLowerCase();
-      if (['w', 'a', 's', 'd'].includes(key)) {
-        teclasRef.current[key as keyof typeof teclasRef.current] = false;
-        atualizarMotoresManual();
-      }
+      if (['w', 'a', 's', 'd'].includes(key)) soltarBotao();
     };
 
     window.addEventListener('keydown', handleKeyDown);
@@ -147,54 +120,12 @@ function App() {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
-      estadoMotores.current = [0, 0, 0, 0]; // Para tudo ao trocar de aba
+      soltarBotao(); 
     };
-  }, [abaAtiva, atualizarMotoresManual]);
-
-  const handleTouchStart = (e: any) => {
-    joyAtivoRef.current = true;
-    moverJoystick(e);
-  };
-
-  const moverJoystick = (e: any) => {
-    if (!joyAtivoRef.current || !areaJoyRef.current) return;
-    
-    const rect = areaJoyRef.current.getBoundingClientRect();
-    const isTouch = e.type.includes('touch');
-    const clientX = isTouch ? e.touches[0].clientX : e.clientX;
-    const clientY = isTouch ? e.touches[0].clientY : e.clientY;
-
-    const centerX = rect.left + rect.width / 2;
-    const centerY = rect.top + rect.height / 2;
-    const maxR = rect.width / 2;
-
-    let dx = clientX - centerX;
-    let dy = clientY - centerY;
-    const distance = Math.sqrt(dx * dx + dy * dy);
-
-    // Trava a "bolinha" do joystick dentro do círculo
-    if (distance > maxR) {
-      dx = (dx / distance) * maxR;
-      dy = (dy / distance) * maxR;
-    }
-
-    setPosicaoJoy({ x: dx, y: dy });
-
-    // Converte os pixels para porcentagem de potência (-100 a 100)
-    const pctX = (dx / maxR) * 100;
-    const pctY = (dy / maxR) * 100;
-    atualizarMotoresManual(pctX, pctY);
-  };
-
-  const handleTouchEnd = () => {
-    joyAtivoRef.current = false;
-    setPosicaoJoy({ x: 0, y: 0 });
-    atualizarMotoresManual(0, 0); // Para o robô quando solta
-  };
-
+  }, [abaAtiva]);
 
   // =========================================================================
-  // 3. COMANDO DE VOZ
+  // 3. COMANDO DE VOZ (MANTIDO INTACTO)
   // =========================================================================
   useEffect(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -257,7 +188,7 @@ function App() {
   };
 
   // =========================================================================
-  // 4. VISÃO COMPUTACIONAL
+  // 4. VISÃO COMPUTACIONAL (MANTIDO INTACTO)
   // =========================================================================
   const [zonaAtual, setZonaAtual] = useState<string>('PARADO');
 
@@ -345,7 +276,7 @@ function App() {
         }
         visaoAtivaRef.current = true; setCameraLigada(true); processarFrameRef.current();
       };
-    } catch (erro) { alert("Erro na câmera. Verifique se permitiu o acesso."); }
+    } catch (erro) { alert("Erro na câmera."); }
   };
 
   const desligarVision = () => {
@@ -361,6 +292,14 @@ function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [abaAtiva]);
 
+  // Estilo padronizado para os botões do D-Pad
+  const btnStyle = {
+    width: '80px', height: '80px', fontSize: '24px', fontWeight: 'bold', 
+    backgroundColor: '#007bff', color: 'white', border: 'none', 
+    borderRadius: '15px', cursor: 'pointer', userSelect: 'none' as const,
+    boxShadow: '0 6px 0 #0056b3', touchAction: 'none'
+  };
+
   // =========================================================================
   // INTERFACE
   // =========================================================================
@@ -369,63 +308,58 @@ function App() {
       <h1>Painel de Controle do MiniBo</h1>
       <p>Status do Servidor: <strong>{statusWs}</strong></p>
 
-      {/* NOVO MENU COM A ABA MANUAL */}
       <div style={{ marginBottom: '20px', display: 'flex', justifyContent: 'center', flexWrap: 'wrap', gap: '10px' }}>
+        <button onClick={() => setAbaAtiva('manual')} style={{ padding: '10px 20px', backgroundColor: abaAtiva === 'manual' ? '#007bff' : '#444', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>🎮 Controle Manual</button>
         <button onClick={() => setAbaAtiva('voz')} style={{ padding: '10px 20px', backgroundColor: abaAtiva === 'voz' ? '#007bff' : '#444', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>🗣️ Comando de Voz</button>
         <button onClick={() => setAbaAtiva('visao')} style={{ padding: '10px 20px', backgroundColor: abaAtiva === 'visao' ? '#007bff' : '#444', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>👁️ Visão Computacional</button>
-        <button onClick={() => setAbaAtiva('manual')} style={{ padding: '10px 20px', backgroundColor: abaAtiva === 'manual' ? '#007bff' : '#444', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>🎮 Controle Manual</button>
       </div>
 
       <hr style={{ borderColor: '#444' }} />
 
-      {/* TELA DE CONTROLE MANUAL (NOVA) */}
+      {/* TELA DE CONTROLE MANUAL (D-PAD GIGANTE E SIMPLES) */}
       {abaAtiva === 'manual' && (
         <div style={{ marginTop: '30px' }}>
-          <h2>Pilote o MiniBo Manualmente</h2>
+          <h2>Aperte e Segure para Andar</h2>
           <p style={{ color: '#aaa', fontSize: '14px', marginBottom: '30px' }}>
-            💻 <strong>No PC:</strong> Utilize as teclas <strong>W, A, S, D</strong> para dirigir.<br/>
-            📱 <strong>No Celular:</strong> Arraste o Joystick virtual abaixo.
+            No PC você também pode segurar as teclas <strong>W, A, S, D</strong>.
           </p>
 
-          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', marginTop: '50px' }}>
-            {/* Base do Joystick (Círculo maior) */}
-            <div 
-              ref={areaJoyRef}
-              onMouseDown={handleTouchStart}
-              onMouseMove={moverJoystick}
-              onMouseUp={handleTouchEnd}
-              onMouseLeave={handleTouchEnd}
-              onTouchStart={handleTouchStart}
-              onTouchMove={moverJoystick}
-              onTouchEnd={handleTouchEnd}
-              style={{
-                width: '200px', height: '200px', backgroundColor: '#333',
-                borderRadius: '50%', position: 'relative',
-                boxShadow: 'inset 0 0 20px rgba(0,0,0,0.8)', border: '2px solid #555', cursor: 'pointer'
-              }}
-            >
-              {/* Marcações de Direção do Joystick */}
-              <div style={{position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)', color: '#555'}}>▲</div>
-              <div style={{position: 'absolute', bottom: 10, left: '50%', transform: 'translateX(-50%)', color: '#555'}}>▼</div>
-              <div style={{position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#555'}}>◀</div>
-              <div style={{position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', color: '#555'}}>▶</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '80px 80px 80px', gap: '15px', justifyContent: 'center', marginTop: '40px' }}>
+            <div /> {/* Espaço vazio no grid */}
+            <button 
+              style={btnStyle}
+              onPointerDown={(e) => { e.preventDefault(); pressionarBotao('FRENTE'); }}
+              onPointerUp={(e) => { e.preventDefault(); soltarBotao(); }}
+              onPointerLeave={(e) => { e.preventDefault(); soltarBotao(); }}
+            > ▲ </button>
+            <div />
 
-              {/* A "Bolinha" do Joystick */}
-              <div style={{
-                width: '60px', height: '60px', backgroundColor: '#007bff',
-                borderRadius: '50%', position: 'absolute',
-                top: '50%', left: '50%',
-                transform: `translate(calc(-50% + ${posicaoJoy.x}px), calc(-50% + ${posicaoJoy.y}px))`,
-                boxShadow: '0 4px 8px rgba(0,0,0,0.5)',
-                transition: joyAtivoRef.current ? 'none' : 'transform 0.2s ease-out'
-              }} />
-            </div>
+            <button 
+              style={btnStyle}
+              onPointerDown={(e) => { e.preventDefault(); pressionarBotao('ESQUERDA'); }}
+              onPointerUp={(e) => { e.preventDefault(); soltarBotao(); }}
+              onPointerLeave={(e) => { e.preventDefault(); soltarBotao(); }}
+            > ◀ </button>
+
+            <button 
+              style={btnStyle}
+              onPointerDown={(e) => { e.preventDefault(); pressionarBotao('TRAS'); }}
+              onPointerUp={(e) => { e.preventDefault(); soltarBotao(); }}
+              onPointerLeave={(e) => { e.preventDefault(); soltarBotao(); }}
+            > ▼ </button>
+
+            <button 
+              style={btnStyle}
+              onPointerDown={(e) => { e.preventDefault(); pressionarBotao('DIREITA'); }}
+              onPointerUp={(e) => { e.preventDefault(); soltarBotao(); }}
+              onPointerLeave={(e) => { e.preventDefault(); soltarBotao(); }}
+            > ▶ </button>
           </div>
 
           <div style={{ marginTop: '40px', padding: '15px', backgroundColor: '#222', borderRadius: '10px', display: 'inline-block' }}>
-             <p style={{ margin: 0, color: '#aaa', fontSize: '13px' }}>Monitor de Telemetria (Manual)</p>
-             <p style={{ margin: '5px 0 0 0', fontWeight: 'bold', color: '#0f0' }}>
-               Lado Esquerdo: {estadoMotores.current[0]}% | Lado Direito: {estadoMotores.current[1]}%
+             <p style={{ margin: 0, color: '#aaa', fontSize: '13px' }}>Ação Atual</p>
+             <p style={{ margin: '5px 0 0 0', fontWeight: 'bold', color: direcaoManual === 'PARADO' ? '#dc3545' : '#0f0', fontSize: '24px' }}>
+               {direcaoManual}
              </p>
           </div>
         </div>
