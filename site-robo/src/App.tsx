@@ -7,6 +7,7 @@ function App() {
   
   // Estados Globais
   const comandoRoboRef = useRef<string>("PARAR");
+  const ultimoEnvioRef = useRef<number>(0);
 
   // ==================== ESTADOS DA VOZ ====================
   const [comandoAtualVoz, setComandoAtualVoz] = useState('PARAR');
@@ -27,10 +28,18 @@ function App() {
   const loopVisaoRef = useRef<number>(0); 
   const visaoAtivaRef = useRef<boolean>(false);
   
-  // Anti-Flicker: Exige que o gesto se mantenha igual por 5 frames seguidos
+  // Anti-Flicker
   const filtroGestoRef = useRef({ comando: 'PARAR', contagem: 0 });
 
   const ws = useRef<WebSocket | null>(null);
+
+  // Trava a rolagem da tela globalmente
+  useEffect(() => {
+    document.body.style.margin = "0";
+    document.body.style.padding = "0";
+    document.body.style.overflow = "hidden";
+    document.body.style.backgroundColor = "#1e1e1e";
+  }, []);
 
   // =========================================================================
   // 1. LIGAÇÃO WEBSOCKET (KEEP-ALIVE)
@@ -65,9 +74,20 @@ function App() {
     };
   }, []);
 
+  // ENVIO INTELIGENTE (SEM FILA / SEM BUFFER BLOAT)
   const enviarComando = (novoComando: string) => {
     if (novoComando !== comandoRoboRef.current) {
+      const agora = Date.now();
+      
+      // Se não for "PARAR", espera pelo menos 1.5s entre comandos 
+      // para dar tempo do robô fazer a animação e não enfileirar ações.
+      if (novoComando !== "PARAR" && agora - ultimoEnvioRef.current < 1500) {
+        return; 
+      }
+
       comandoRoboRef.current = novoComando;
+      ultimoEnvioRef.current = agora;
+      
       if (ws.current && ws.current.readyState === WebSocket.OPEN) {
         ws.current.send(novoComando);
       }
@@ -125,8 +145,10 @@ function App() {
   };
 
   // =========================================================================
-  // 3. VISÃO COMPUTACIONAL (LÓGICA GEOMÉTRICA DE GESTOS)
+  // 3. VISÃO COMPUTACIONAL (NOVA LÓGICA POR DISTÂNCIA E CONTAGEM)
   // =========================================================================
+  const getDist = (p1: any, p2: any) => Math.hypot(p1.x - p2.x, p1.y - p2.y);
+
   const onResultsHand = useCallback((results: any) => {
     if (!canvasRef.current || !visaoAtivaRef.current) return;
     const canvasCtx = canvasRef.current.getContext('2d');
@@ -142,46 +164,39 @@ function App() {
     if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
       const landmarks = results.multiHandLandmarks[0];
 
-      // Desenha as bolinhas verdes nas juntas
       canvasCtx.save();
       for (let i = 0; i < 21; i++) {
-        const x = landmarks[i].x * W;
-        const y = landmarks[i].y * H;
         canvasCtx.beginPath();
-        canvasCtx.arc(x, y, 4, 0, 2 * Math.PI);
+        canvasCtx.arc(landmarks[i].x * W, landmarks[i].y * H, 4, 0, 2 * Math.PI);
         canvasCtx.fillStyle = '#00ff00';
         canvasCtx.fill();
       }
       canvasCtx.restore();
 
-      // MÁGICA 1: Saber quais dedos estão esticados (Ponta do dedo acima da base)
-      const isIndexUp = landmarks[8].y < landmarks[6].y;
-      const isMiddleUp = landmarks[12].y < landmarks[10].y;
-      const isRingUp = landmarks[16].y < landmarks[14].y;
-      const isPinkyUp = landmarks[20].y < landmarks[18].y;
-
-      // MÁGICA 2: Saber se o polegar está aberto ou dobrado para dentro
-      const isThumbOut = Math.abs(landmarks[4].x - landmarks[9].x) > Math.abs(landmarks[3].x - landmarks[9].x);
-
-      // MÁGICA 3: Medir distâncias entre as pontas dos dedos para sinais especiais
-      // Distância Polegar - Indicador (Para o sinal de OK)
-      const distThumbIndex = Math.hypot(landmarks[8].x - landmarks[4].x, landmarks[8].y - landmarks[4].y);
-      const isOkSign = distThumbIndex < 0.08; // Se estiverem muito próximos
-
-      // Distâncias para o Star Trek (Buraco entre dedo médio e anelar)
-      const distMiddleRing = Math.hypot(landmarks[12].x - landmarks[16].x, landmarks[12].y - landmarks[16].y);
-      const distIndexMiddle = Math.hypot(landmarks[8].x - landmarks[12].x, landmarks[8].y - landmarks[12].y);
-      const distRingPinky = Math.hypot(landmarks[16].x - landmarks[20].x, landmarks[16].y - landmarks[20].y);
+      const wrist = landmarks[0];
       
-      const isStarTrek = isIndexUp && isMiddleUp && isRingUp && isPinkyUp && 
-                         (distMiddleRing > distIndexMiddle * 1.5) && 
-                         (distMiddleRing > distRingPinky * 1.5);
+      // Verifica se o dedo está esticado comparando a distância da ponta até o pulso 
+      // com a distância da articulação do meio até o pulso. Funciona em qualquer ângulo!
+      const isIndexUp  = getDist(wrist, landmarks[8])  > getDist(wrist, landmarks[6]) * 1.1;
+      const isMiddleUp = getDist(wrist, landmarks[12]) > getDist(wrist, landmarks[10]) * 1.1;
+      const isRingUp   = getDist(wrist, landmarks[16]) > getDist(wrist, landmarks[14]) * 1.1;
+      const isPinkyUp  = getDist(wrist, landmarks[20]) > getDist(wrist, landmarks[18]) * 1.1;
 
-      // ==============================================================
-      // NOVO DICIONÁRIO DE GESTOS DO MINIBO (Por prioridade)
-      // ==============================================================
-      if (isOkSign && isMiddleUp && isRingUp && isPinkyUp) {
-        detectadoComando = "ALONGAR"; detectadoNome = "👌 Sinal de OK (Alongar)";
+      // Polegar para fora? (Compara a base do mindinho)
+      const isThumbOut = getDist(landmarks[4], landmarks[17]) > getDist(landmarks[2], landmarks[17]);
+
+      // Distâncias Especiais
+      const distThumbIndex = getDist(landmarks[4], landmarks[8]);
+      const isOkSign = distThumbIndex < 0.05 && isMiddleUp && isRingUp && isPinkyUp; // Dedão e Ind. colados
+      
+      // Star Trek (Buraco entre dedo médio e anelar)
+      const distMiddleRing = getDist(landmarks[12], landmarks[16]);
+      const distIndexMiddle = getDist(landmarks[8], landmarks[12]);
+      const isStarTrek = isIndexUp && isMiddleUp && isRingUp && isPinkyUp && (distMiddleRing > distIndexMiddle * 1.8);
+
+      // --- MAPEAMENTO EXATO DOS SINAIS ---
+      if (isOkSign) {
+        detectadoComando = "ALONGAR"; detectadoNome = "👌 OK (Alongar)";
       } 
       else if (isStarTrek) {
         detectadoComando = "SENTAR"; detectadoNome = "🖖 Star Trek (Sentar)";
@@ -192,8 +207,8 @@ function App() {
       else if (!isIndexUp && !isMiddleUp && !isRingUp && isPinkyUp && isThumbOut) {
         detectadoComando = "ALEGRE"; detectadoNome = "🤙 Hang Loose (Alegre)";
       } 
-      else if (!isIndexUp && !isMiddleUp && !isRingUp && !isPinkyUp) {
-        detectadoComando = "PARAR"; detectadoNome = "✊ Mão Fechada (Parar)";
+      else if (!isIndexUp && !isMiddleUp && !isRingUp && !isPinkyUp && !isThumbOut) {
+        detectadoComando = "PARAR"; detectadoNome = "✊ 0 Dedos (Parar)";
       } 
       else if (isIndexUp && !isMiddleUp && !isRingUp && !isPinkyUp) {
         detectadoComando = "ESQUERDA"; detectadoNome = "☝️ 1 Dedo (Esquerda)";
@@ -204,29 +219,26 @@ function App() {
       else if (isIndexUp && isMiddleUp && isRingUp && !isPinkyUp) {
         detectadoComando = "DIREITA"; detectadoNome = "3️⃣ 3 Dedos (Direita)";
       } 
-      else if (isIndexUp && isMiddleUp && isRingUp && isPinkyUp) {
-        // Se 4 dedos estão pra cima, a diferença é o polegar (Aberto = 5, Fechado = 4)
-        if (isThumbOut) {
-          detectadoComando = "FRENTE"; detectadoNome = "🖐️ Mão Aberta (Frente)";
-        } else {
-          detectadoComando = "DEITAR"; detectadoNome = "✋ 4 Dedos (Deitar)";
-        }
-      }
+      else if (isIndexUp && isMiddleUp && isRingUp && isPinkyUp && !isThumbOut) {
+        detectadoComando = "DEITAR"; detectadoNome = "✋ 4 Dedos (Deitar)";
+      } 
+      else if (isIndexUp && isMiddleUp && isRingUp && isPinkyUp && isThumbOut) {
+        detectadoComando = "FRENTE"; detectadoNome = "🖐️ Mão Aberta (Frente)";
+      } 
       else {
-        // Gesto de transição confuso
-        detectadoComando = "PARAR"; detectadoNome = "⏳ Analisando...";
+        // Ignora transições bizarras da mão e mantem parado/aguardando
+        detectadoComando = "PARAR"; detectadoNome = "⏳ Lendo Mão...";
       }
     }
 
-    // SISTEMA ANTI-FLICKER (Debounce)
+    // DEBOUNCE (15 frames = A mão precisa estar parada na mesma pose por ~0.5s)
     if (detectadoComando === filtroGestoRef.current.comando) {
       filtroGestoRef.current.contagem++;
     } else {
       filtroGestoRef.current = { comando: detectadoComando, contagem: 1 };
     }
 
-    // Só consolida o envio se a mão ficou parada no mesmo gesto por uns 5 frames
-    if (filtroGestoRef.current.contagem >= 5) {
+    if (filtroGestoRef.current.contagem >= 15) {
       setGestoNome(detectadoNome);
       setComandoAtualVisao(detectadoComando);
       enviarComando(detectadoComando);
@@ -247,7 +259,7 @@ function App() {
   const iniciarVision = async () => {
     if (!videoRef.current || !canvasRef.current) return;
     const Hands = (window as any).Hands;
-    if (!Hands) return alert("Aguarde o carregamento das bibliotecas de IA...");
+    if (!Hands) return alert("Aguarde a IA carregar...");
     
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
@@ -264,20 +276,16 @@ function App() {
         }
         visaoAtivaRef.current = true; setCameraLigada(true); processarFrameRef.current();
       };
-    } catch (erro) { alert("Erro na câmera. Verifique se permitiu o acesso."); }
+    } catch (erro) { alert("Câmera bloqueada."); }
   };
 
   const desligarVision = () => {
     visaoAtivaRef.current = false; cancelAnimationFrame(loopVisaoRef.current); 
     if (streamRef.current) streamRef.current.getTracks().forEach(track => track.stop());
     if (videoRef.current) videoRef.current.srcObject = null;
-    setCameraLigada(false); 
-    setComandoAtualVisao('PARAR'); setGestoNome('Nenhum'); enviarComando("PARAR");
+    setCameraLigada(false); setComandoAtualVisao('PARAR'); setGestoNome('Nenhum'); enviarComando("PARAR");
   };
 
-  // =========================================================================
-  // GESTÃO DE ABAS (Desliga ferramentas ao trocar)
-  // =========================================================================
   useEffect(() => {
     if (abaAtiva !== 'voz' && ouvindoVoz) alternarMicrofone();
     if (abaAtiva !== 'visao' && cameraLigada) desligarVision();
@@ -286,82 +294,78 @@ function App() {
   }, [abaAtiva]);
 
   // =========================================================================
-  // INTERFACE
+  // INTERFACE - RESPONSIVA, FLEXBOX E SEM ROLAGEM
   // =========================================================================
   return (
-    <div style={{ fontFamily: 'Arial', padding: '20px', textAlign: 'center', backgroundColor: '#1e1e1e', color: 'white', minHeight: '100vh', touchAction: 'none' }}>
-      <h1>Painel de Controle do MiniBo</h1>
-      <p>Status do Servidor: <strong>{statusWs}</strong></p>
-
-      <div style={{ marginBottom: '20px', display: 'flex', justifyContent: 'center', flexWrap: 'wrap', gap: '10px' }}>
-        <button onClick={() => setAbaAtiva('voz')} style={{ padding: '10px 20px', backgroundColor: abaAtiva === 'voz' ? '#007bff' : '#444', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>🗣️ Comando de Voz</button>
-        <button onClick={() => setAbaAtiva('visao')} style={{ padding: '10px 20px', backgroundColor: abaAtiva === 'visao' ? '#007bff' : '#444', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>👁️ Visão Computacional</button>
-        <button onClick={() => setAbaAtiva('manual')} style={{ padding: '10px 20px', backgroundColor: abaAtiva === 'manual' ? '#007bff' : '#444', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>🎮 Controle Manual</button>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', color: 'white', fontFamily: 'Arial' }}>
+      
+      {/* HEADER FIXO */}
+      <div style={{ padding: '10px 20px', textAlign: 'center', flexShrink: 0 }}>
+        <h2 style={{ margin: '5px 0' }}>MiniBo Painel</h2>
+        <p style={{ margin: '0 0 10px 0', fontSize: '14px' }}>Rede: <strong>{statusWs}</strong></p>
+        
+        <div style={{ display: 'flex', justifyContent: 'center', gap: '8px' }}>
+          <button onClick={() => setAbaAtiva('voz')} style={{ padding: '8px 15px', backgroundColor: abaAtiva === 'voz' ? '#007bff' : '#444', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>🗣️ Voz</button>
+          <button onClick={() => setAbaAtiva('visao')} style={{ padding: '8px 15px', backgroundColor: abaAtiva === 'visao' ? '#007bff' : '#444', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>👁️ Visão</button>
+          <button onClick={() => setAbaAtiva('manual')} style={{ padding: '8px 15px', backgroundColor: abaAtiva === 'manual' ? '#007bff' : '#444', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>🎮 Manual</button>
+        </div>
       </div>
 
-      <hr style={{ borderColor: '#444' }} />
-
-      {/* TELA DE COMANDO DE VOZ */}
-      {abaAtiva === 'voz' && (
-        <div style={{ marginTop: '30px' }}>
-          <h2>Controle por Comando de Voz Estável</h2>
-          <p style={{ color: '#aaa' }}>
-            Diga: <strong>Frente, Trás, Esquerda, Direita, Sentar, Deitar, Alongar, Dançar, Alegre, Parar</strong>
-          </p>
-          <button onClick={alternarMicrofone} style={{ padding: '20px 40px', fontSize: '20px', color: 'white', border: 'none', borderRadius: '10px', cursor: 'pointer', marginTop: '10px', backgroundColor: ouvindoVoz ? '#dc3545' : '#28a745' }}>{ouvindoVoz ? '🛑 Parar Ouvinte' : '🎙️ Ativar Ouvinte'}</button>
-          
-          <div style={{ marginTop: '30px', minHeight: '40px' }}>
-             <p style={{ color: '#aaa', margin: 0 }}>O navegador ouviu:</p>
-             <h3 style={{ color: '#ffc107', marginTop: '5px', fontStyle: 'italic' }}>
-               {ouvindoVoz ? `"${fraseOuvida}"` : 'Microfone desligado'}
-             </h3>
+      {/* ÁREA DE CONTEÚDO (Ocupa o resto da tela, não rola) */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', position: 'relative', overflow: 'hidden' }}>
+        
+        {/* ================= ABA VOZ ================= */}
+        {abaAtiva === 'voz' && (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+            <p style={{ color: '#aaa', textAlign: 'center' }}>Diga: Frente, Trás, Esquerda, Direita, Sentar, Deitar, Alongar, Dançar, Alegre, Parar</p>
+            <button onClick={alternarMicrofone} style={{ padding: '20px 40px', fontSize: '20px', color: 'white', border: 'none', borderRadius: '10px', cursor: 'pointer', backgroundColor: ouvindoVoz ? '#dc3545' : '#28a745', marginBottom: '20px' }}>
+              {ouvindoVoz ? '🛑 Parar Ouvinte' : '🎙️ Ativar Ouvinte'}
+            </button>
+            <p style={{ color: '#ffc107', fontStyle: 'italic', height: '30px' }}>{ouvindoVoz ? `"${fraseOuvida}"` : ''}</p>
+            <div style={{ padding: '20px', backgroundColor: '#333', borderRadius: '10px', minWidth: '250px', textAlign: 'center' }}>
+              <p style={{ margin: 0, color: '#aaa' }}>Executando:</p>
+              <p style={{ margin: '10px 0 0 0', fontSize: '30px', fontWeight: 'bold', color: comandoAtualVoz === 'PARAR' ? '#dc3545' : '#17a2b8' }}>{comandoAtualVoz}</p>
+            </div>
           </div>
+        )}
 
-          <div style={{ marginTop: '20px', padding: '20px', backgroundColor: '#333', borderRadius: '10px', display: 'inline-block', minWidth: '300px' }}>
-            <p style={{ margin: 0, fontSize: '18px', color: '#aaa' }}>Robô Executando:</p>
-            <p style={{ margin: '10px 0 0 0', fontSize: '36px', fontWeight: 'bold', color: comandoAtualVoz === 'PARAR' ? '#dc3545' : '#17a2b8' }}>{comandoAtualVoz}</p>
-          </div>
-        </div>
-      )}
-
-      {/* TELA DE VISÃO COMPUTACIONAL */}
-      {abaAtiva === 'visao' && (
-        <div style={{ marginTop: '30px' }}>
-          <h2>Reconhecimento de Gestos da Mão</h2>
-          <p style={{ color: '#aaa', fontSize: '14px', maxWidth: '600px', margin: '0 auto 20px auto' }}>
-            Faça gestos na câmera! Punho = Parar | Mão Aberta = Frente | 1 Dedo = Esquerda | 2 Dedos = Trás | 3 Dedos = Direita | 4 Dedos = Deitar | Star Trek = Sentar | OK = Alongar | Rock = Dançar | Hang Loose = Alegre
-          </p>
-          
-          <button onClick={cameraLigada ? desligarVision : iniciarVision} style={{ padding: '15px 30px', fontSize: '16px', backgroundColor: cameraLigada ? '#dc3545' : '#28a745', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', marginBottom: '20px' }}>
-            {cameraLigada ? '❌ Desligar Câmera' : '🤖 Ligar IA de Mão'}
-          </button>
-          
-          <br />
-          
-          <div style={{ position: 'relative', width: '640px', height: '480px', margin: '0 auto', border: cameraLigada ? '3px solid #007bff' : '3px solid #555', borderRadius: '10px', backgroundColor: '#000', overflow: 'hidden' }}>
-            <video ref={videoRef} playsInline muted style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }} />
-            <canvas ref={canvasRef} width="640" height="480" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 10, transform: 'scaleX(-1)' }} />
+        {/* ================= ABA VISÃO ================= */}
+        {abaAtiva === 'visao' && (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
             
-            {cameraLigada && (
-              <div style={{ position: 'absolute', bottom: '20px', left: '20px', backgroundColor: 'rgba(0,0,0,0.85)', padding: '15px', borderRadius: '10px', textAlign: 'left', zIndex: 20, minWidth: '220px' }}>
-                <p style={{ margin: 0, fontSize: '14px', color: '#aaa' }}>Gesto Detectado:</p>
-                <p style={{ margin: '5px 0 10px 0', fontWeight: 'bold', color: '#ffff00', fontSize: '18px' }}>{gestoNome}</p>
-                <hr style={{ borderColor: '#444', margin: '10px 0' }} />
-                <p style={{ margin: 0, fontSize: '14px', color: '#aaa' }}>Ação do Robô:</p>
-                <p style={{ margin: '5px 0 0 0', fontWeight: 'bold', color: comandoAtualVisao === 'PARAR' ? '#dc3545' : '#17a2b8', fontSize: '24px' }}>{comandoAtualVisao}</p>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+            {/* Controles da Visão */}
+            <div style={{ padding: '10px', textAlign: 'center', flexShrink: 0 }}>
+              <button onClick={cameraLigada ? desligarVision : iniciarVision} style={{ padding: '10px 20px', fontSize: '14px', backgroundColor: cameraLigada ? '#dc3545' : '#28a745', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>
+                {cameraLigada ? '❌ Desligar Câmera' : '🤖 Ligar Câmera'}
+              </button>
+            </div>
 
-      {/* TELA DE CONTROLE MANUAL */}
-      {abaAtiva === 'manual' && (
-        <div style={{ marginTop: '30px', opacity: 0.5 }}>
-          <h2>Pilote o MiniBo Manualmente</h2>
-          <p style={{ color: '#ffcc00' }}>⚠️ Temporariamente desativado enquanto focamos na IA.</p>
-        </div>
-      )}
+            {/* Container do Vídeo (Preenche o resto da tela, ajusta aspect-ratio) */}
+            <div style={{ flex: 1, position: 'relative', backgroundColor: '#000' }}>
+              <video ref={videoRef} playsInline muted style={{ width: '100%', height: '100%', objectFit: 'contain', transform: 'scaleX(-1)' }} />
+              <canvas ref={canvasRef} style={{ width: '100%', height: '100%', objectFit: 'contain', position: 'absolute', top: 0, left: 0, transform: 'scaleX(-1)' }} />
+              
+              {/* LEGENDA FLUTUANTE (No topo esquerdo, não empurra nada) */}
+              {cameraLigada && (
+                <div style={{ position: 'absolute', top: '15px', left: '15px', backgroundColor: 'rgba(0,0,0,0.7)', padding: '10px 15px', borderRadius: '8px', zIndex: 20 }}>
+                  <p style={{ margin: 0, fontSize: '12px', color: '#aaa' }}>Gesto:</p>
+                  <p style={{ margin: '2px 0 5px 0', fontWeight: 'bold', color: '#ffff00', fontSize: '16px' }}>{gestoNome}</p>
+                  <p style={{ margin: 0, fontSize: '12px', color: '#aaa' }}>Comando:</p>
+                  <p style={{ margin: '2px 0 0 0', fontWeight: 'bold', color: comandoAtualVisao === 'PARAR' ? '#dc3545' : '#17a2b8', fontSize: '18px' }}>{comandoAtualVisao}</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ================= ABA MANUAL ================= */}
+        {abaAtiva === 'manual' && (
+           <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+             <p style={{ color: '#ffcc00' }}>⚠️ Desativado enquanto focamos na IA.</p>
+           </div>
+        )}
+
+      </div>
     </div>
   );
 }
