@@ -19,7 +19,7 @@ function App() {
   const comandoRoboRef = useRef<string>("PARAR");
 
   // =========================================================================
-  // 1. LIGAÇÃO WEBSOCKET E TRANSMISSÃO CONTÍNUA
+  // 1. LIGAÇÃO WEBSOCKET E TRANSMISSÃO OTIMIZADA
   // =========================================================================
   useEffect(() => {
     const protocoloWs = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -39,24 +39,23 @@ function App() {
 
     conectar();
 
-    // Coração do Robô: Envia a cada 2 segundos APENAS para manter a conexão viva (Keep-Alive)
-    // O engarrafamento de dados acabou!
-    const transmissor = setInterval(() => {
+    // REMOVIDA A METRALHADORA DE COMANDOS!
+    // Agora enviamos um "ping" vazio a cada 10 segundos apenas para o servidor Railway 
+    // não derrubar a conexão por inatividade. O envio real é feito na hora que você fala.
+    const keepAlive = setInterval(() => {
       if (ws.current && ws.current.readyState === WebSocket.OPEN) {
-        if (abaAtiva === 'voz') {
-          ws.current.send(comandoRoboRef.current);
-        }
+        ws.current.send("PING");
       }
-    }, 2000);
+    }, 10000);
 
     return () => {
-      clearInterval(transmissor);
+      clearInterval(keepAlive);
       ws.current?.close();
     };
-  }, [abaAtiva]);
+  }, []);
 
   // =========================================================================
-  // 2. COMANDO DE VOZ (REFORMULADO E OTIMIZADO)
+  // 2. COMANDO DE VOZ (ENVIO ÚNICO INSTANTÂNEO)
   // =========================================================================
   useEffect(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -87,14 +86,15 @@ function App() {
         else if (/\b(feliz|alegre|abana|fofo)\b/.test(fala)) novoComando = "ALEGRE";
         else if (/\b(para|pare|parar|stop)\b/.test(fala)) novoComando = "PARAR";
 
-        // SÓ ENVIA PARA O ROBÔ SE A PALAVRA MUDOU (Evita entupir o ESP32)
+        // MÁGICA AQUI: Só envia a palavra para o robô se ela for DIFERENTE da última.
+        // Fim das repetições acumuladas na memória!
         if (novoComando !== comandoRoboRef.current) {
-            setComandoAtualVoz(novoComando);
-            comandoRoboRef.current = novoComando;
-            
-            if (ws.current && ws.current.readyState === WebSocket.OPEN) {
-                ws.current.send(novoComando);
-            }
+          setComandoAtualVoz(novoComando);
+          comandoRoboRef.current = novoComando;
+          
+          if (ws.current && ws.current.readyState === WebSocket.OPEN) {
+            ws.current.send(novoComando);
+          }
         }
       };
 
@@ -114,10 +114,9 @@ function App() {
       comandoRoboRef.current = "PARAR"; 
       setComandoAtualVoz("PARAR"); 
       setFraseOuvida('');
-
-      // Manda parar na hora que desliga o microfone
+      
       if (ws.current && ws.current.readyState === WebSocket.OPEN) {
-          ws.current.send("PARAR");
+        ws.current.send("PARAR");
       }
     } else { 
       ouvindoRef.current = true; 
@@ -126,7 +125,6 @@ function App() {
     }
   };
 
-  // Trava o robô e desliga o mic se mudar de aba
   useEffect(() => {
     if (abaAtiva !== 'voz' && ouvindoVoz) alternarMicrofone();
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -165,7 +163,7 @@ function App() {
           </div>
 
           <div style={{ marginTop: '20px', padding: '20px', backgroundColor: '#333', borderRadius: '10px', display: 'inline-block', minWidth: '300px' }}>
-            <p style={{ margin: 0, fontSize: '18px', color: '#aaa' }}>Enviando para o Robô:</p>
+            <p style={{ margin: 0, fontSize: '18px', color: '#aaa' }}>Último comando recebido:</p>
             <p style={{ margin: '10px 0 0 0', fontSize: '36px', fontWeight: 'bold', color: comandoAtualVoz === 'PARAR' ? '#dc3545' : '#17a2b8' }}>{comandoAtualVoz}</p>
           </div>
         </div>
