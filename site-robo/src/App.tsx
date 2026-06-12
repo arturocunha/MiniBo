@@ -39,14 +39,15 @@ function App() {
 
     conectar();
 
-    // Coração do Robô: Envia apenas a PALAVRA DE COMANDO atual
+    // Coração do Robô: Envia a cada 2 segundos APENAS para manter a conexão viva (Keep-Alive)
+    // O engarrafamento de dados acabou!
     const transmissor = setInterval(() => {
       if (ws.current && ws.current.readyState === WebSocket.OPEN) {
         if (abaAtiva === 'voz') {
           ws.current.send(comandoRoboRef.current);
         }
       }
-    }, 150);
+    }, 2000);
 
     return () => {
       clearInterval(transmissor);
@@ -55,7 +56,7 @@ function App() {
   }, [abaAtiva]);
 
   // =========================================================================
-  // 2. COMANDO DE VOZ (REFORMULADO PARA TEXTO)
+  // 2. COMANDO DE VOZ (REFORMULADO E OTIMIZADO)
   // =========================================================================
   useEffect(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -86,8 +87,15 @@ function App() {
         else if (/\b(feliz|alegre|abana|fofo)\b/.test(fala)) novoComando = "ALEGRE";
         else if (/\b(para|pare|parar|stop)\b/.test(fala)) novoComando = "PARAR";
 
-        setComandoAtualVoz(novoComando);
-        comandoRoboRef.current = novoComando;
+        // SÓ ENVIA PARA O ROBÔ SE A PALAVRA MUDOU (Evita entupir o ESP32)
+        if (novoComando !== comandoRoboRef.current) {
+            setComandoAtualVoz(novoComando);
+            comandoRoboRef.current = novoComando;
+            
+            if (ws.current && ws.current.readyState === WebSocket.OPEN) {
+                ws.current.send(novoComando);
+            }
+        }
       };
 
       recognitionRef.current.onend = () => { 
@@ -106,6 +114,11 @@ function App() {
       comandoRoboRef.current = "PARAR"; 
       setComandoAtualVoz("PARAR"); 
       setFraseOuvida('');
+
+      // Manda parar na hora que desliga o microfone
+      if (ws.current && ws.current.readyState === WebSocket.OPEN) {
+          ws.current.send("PARAR");
+      }
     } else { 
       ouvindoRef.current = true; 
       setOuvindoVoz(true); 
