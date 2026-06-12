@@ -1,25 +1,39 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import './App.css';
 
 function App() {
   const [abaAtiva, setAbaAtiva] = useState<'voz' | 'visao' | 'manual'>('voz');
   const [statusWs, setStatusWs] = useState('A ligar...');
   
-  // Estados da Voz
+  // Estados Globais
+  const comandoRoboRef = useRef<string>("PARAR");
+
+  // ==================== ESTADOS DA VOZ ====================
   const [comandoAtualVoz, setComandoAtualVoz] = useState('PARAR');
   const [ouvindoVoz, setOuvindoVoz] = useState(false);
   const [fraseOuvida, setFraseOuvida] = useState('');
-
-  // Referências principais
-  const ws = useRef<WebSocket | null>(null);
   const recognitionRef = useRef<any>(null); 
   const ouvindoRef = useRef(false); 
+
+  // ==================== ESTADOS DA VISÃO ====================
+  const [cameraLigada, setCameraLigada] = useState(false); 
+  const [comandoAtualVisao, setComandoAtualVisao] = useState('PARAR');
+  const [gestoNome, setGestoNome] = useState('Nenhum');
   
-  // Armazena a String exata que vai ser enviada para o ESP32
-  const comandoRoboRef = useRef<string>("PARAR");
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const streamRef = useRef<MediaStream | null>(null); 
+  const handsRef = useRef<any>(null); 
+  const loopVisaoRef = useRef<number>(0); 
+  const visaoAtivaRef = useRef<boolean>(false);
+  
+  // Anti-Flicker: Exige que o gesto se mantenha igual por X frames antes de enviar
+  const filtroGestoRef = useRef({ comando: 'PARAR', contagem: 0 });
+
+  const ws = useRef<WebSocket | null>(null);
 
   // =========================================================================
-  // 1. LIGAÇÃO WEBSOCKET E TRANSMISSÃO OTIMIZADA
+  // 1. LIGAÇÃO WEBSOCKET (KEEP-ALIVE)
   // =========================================================================
   useEffect(() => {
     const protocoloWs = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -39,9 +53,6 @@ function App() {
 
     conectar();
 
-    // REMOVIDA A METRALHADORA DE COMANDOS!
-    // Agora enviamos um "ping" vazio a cada 10 segundos apenas para o servidor Railway 
-    // não derrubar a conexão por inatividade. O envio real é feito na hora que você fala.
     const keepAlive = setInterval(() => {
       if (ws.current && ws.current.readyState === WebSocket.OPEN) {
         ws.current.send("PING");
@@ -54,12 +65,20 @@ function App() {
     };
   }, []);
 
+  const enviarComando = (novoComando: string) => {
+    if (novoComando !== comandoRoboRef.current) {
+      comandoRoboRef.current = novoComando;
+      if (ws.current && ws.current.readyState === WebSocket.OPEN) {
+        ws.current.send(novoComando);
+      }
+    }
+  };
+
   // =========================================================================
-  // 2. COMANDO DE VOZ (ENVIO ÚNICO INSTANTÂNEO)
+  // 2. COMANDO DE VOZ
   // =========================================================================
   useEffect(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    
     if (SpeechRecognition) {
       recognitionRef.current = new SpeechRecognition();
       recognitionRef.current.lang = 'pt-BR'; 
@@ -73,29 +92,20 @@ function App() {
         const fala = event.results[lastIndex][0].transcript.toLowerCase().trim();
         setFraseOuvida(fala);
         
-        let novoComando = comandoRoboRef.current; 
+        let novo = comandoRoboRef.current; 
+        if (/\b(frente|avançar|vai|andar)\b/.test(fala)) novo = "FRENTE";
+        else if (/\b(esquerda|left)\b/.test(fala)) novo = "ESQUERDA";
+        else if (/\b(direita|right)\b/.test(fala)) novo = "DIREITA";
+        else if (/\b(tr[aász]|r[eé]|recuar)\b/.test(fala)) novo = "TRAS";
+        else if (/\b(senta|sentar)\b/.test(fala)) novo = "SENTAR";
+        else if (/\b(deita|deitar)\b/.test(fala)) novo = "DEITAR";
+        else if (/\b(estica|alongar|espreguiça|espreguiçar)\b/.test(fala)) novo = "ALONGAR";
+        else if (/\b(dança|dançar|dancinha)\b/.test(fala)) novo = "DANCAR";
+        else if (/\b(feliz|alegre|abana|fofo)\b/.test(fala)) novo = "ALEGRE";
+        else if (/\b(para|pare|parar|stop)\b/.test(fala)) novo = "PARAR";
 
-        if (/\b(frente|avançar|vai|andar)\b/.test(fala)) novoComando = "FRENTE";
-        else if (/\b(esquerda|left)\b/.test(fala)) novoComando = "ESQUERDA";
-        else if (/\b(direita|right)\b/.test(fala)) novoComando = "DIREITA";
-        else if (/\b(tr[aász]|r[eé]|recuar)\b/.test(fala)) novoComando = "TRAS";
-        else if (/\b(senta|sentar)\b/.test(fala)) novoComando = "SENTAR";
-        else if (/\b(deita|deitar)\b/.test(fala)) novoComando = "DEITAR";
-        else if (/\b(estica|alongar|espreguiça|espreguiçar)\b/.test(fala)) novoComando = "ALONGAR";
-        else if (/\b(dança|dançar|dancinha)\b/.test(fala)) novoComando = "DANCAR";
-        else if (/\b(feliz|alegre|abana|fofo)\b/.test(fala)) novoComando = "ALEGRE";
-        else if (/\b(para|pare|parar|stop)\b/.test(fala)) novoComando = "PARAR";
-
-        // MÁGICA AQUI: Só envia a palavra para o robô se ela for DIFERENTE da última.
-        // Fim das repetições acumuladas na memória!
-        if (novoComando !== comandoRoboRef.current) {
-          setComandoAtualVoz(novoComando);
-          comandoRoboRef.current = novoComando;
-          
-          if (ws.current && ws.current.readyState === WebSocket.OPEN) {
-            ws.current.send(novoComando);
-          }
-        }
+        setComandoAtualVoz(novo);
+        enviarComando(novo);
       };
 
       recognitionRef.current.onend = () => { 
@@ -105,28 +115,158 @@ function App() {
   }, []); 
 
   const alternarMicrofone = () => {
-    if (!recognitionRef.current) return alert("O navegador não suporta comando de voz.");
+    if (!recognitionRef.current) return alert("Navegador não suporta voz.");
     if (ouvindoVoz) { 
-      ouvindoRef.current = false; 
-      setOuvindoVoz(false); 
-      recognitionRef.current.stop(); 
-      
-      comandoRoboRef.current = "PARAR"; 
-      setComandoAtualVoz("PARAR"); 
-      setFraseOuvida('');
-      
-      if (ws.current && ws.current.readyState === WebSocket.OPEN) {
-        ws.current.send("PARAR");
-      }
+      ouvindoRef.current = false; setOuvindoVoz(false); recognitionRef.current.stop(); 
+      setComandoAtualVoz("PARAR"); setFraseOuvida(''); enviarComando("PARAR");
     } else { 
-      ouvindoRef.current = true; 
-      setOuvindoVoz(true); 
-      recognitionRef.current.start(); 
+      ouvindoRef.current = true; setOuvindoVoz(true); recognitionRef.current.start(); 
     }
   };
 
+  // =========================================================================
+  // 3. VISÃO COMPUTACIONAL (MÃOS / GESTOS)
+  // =========================================================================
+  const onResultsHand = useCallback((results: any) => {
+    if (!canvasRef.current || !visaoAtivaRef.current) return;
+    const canvasCtx = canvasRef.current.getContext('2d');
+    if (!canvasCtx) return;
+
+    const W = canvasRef.current.width;
+    const H = canvasRef.current.height;
+    canvasCtx.clearRect(0, 0, W, H);
+
+    let detectadoComando = "PARAR";
+    let detectadoNome = "🚫 Nenhuma mão detectada";
+
+    if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+      const landmarks = results.multiHandLandmarks[0];
+
+      // Desenha o esqueleto holográfico da mão
+      canvasCtx.save();
+      // O Canvas está com scaleX(-1) no CSS, então aqui só desenhamos normal
+      for (let i = 0; i < 21; i++) {
+        const x = landmarks[i].x * W;
+        const y = landmarks[i].y * H;
+        canvasCtx.beginPath();
+        canvasCtx.arc(x, y, 4, 0, 2 * Math.PI);
+        canvasCtx.fillStyle = '#00ff00';
+        canvasCtx.fill();
+      }
+      canvasCtx.restore();
+
+      // DEDOS LEVANTADOS (A coordenada Y cresce para baixo. Y menor = dedo esticado)
+      const isIndexUp = landmarks[8].y < landmarks[6].y;
+      const isMiddleUp = landmarks[12].y < landmarks[10].y;
+      const isRingUp = landmarks[16].y < landmarks[14].y;
+      const isPinkyUp = landmarks[20].y < landmarks[18].y;
+
+      // Inclinação do Pulso (Landmark 0) para o dedo do meio (Landmark 9)
+      const tiltX = landmarks[9].x - landmarks[0].x;
+
+      // LOGICA DE GESTOS
+      if (!isIndexUp && !isMiddleUp && !isRingUp && !isPinkyUp) {
+        detectadoComando = "PARAR"; detectadoNome = "✊ Punho (Parar)";
+      } 
+      else if (isIndexUp && isMiddleUp && isRingUp && isPinkyUp) {
+        // Mão Aberta: Checa inclinação para Curvas
+        if (tiltX < -0.15) {
+          detectadoComando = "DIREITA"; detectadoNome = "👉 Inclinada Direita";
+        } else if (tiltX > 0.15) {
+          detectadoComando = "ESQUERDA"; detectadoNome = "👈 Inclinada Esquerda";
+        } else {
+          detectadoComando = "FRENTE"; detectadoNome = "🖐️ Mão Aberta (Frente)";
+        }
+      } 
+      else if (isIndexUp && isMiddleUp && !isRingUp && !isPinkyUp) {
+        detectadoComando = "TRAS"; detectadoNome = "✌️ Paz e Amor (Trás)";
+      } 
+      else if (isIndexUp && !isMiddleUp && !isRingUp && !isPinkyUp) {
+        detectadoComando = "SENTAR"; detectadoNome = "☝️ Indicador (Sentar)";
+      } 
+      else if (isIndexUp && !isMiddleUp && !isRingUp && isPinkyUp) {
+        detectadoComando = "DANCAR"; detectadoNome = "🤘 Rock (Dançar)";
+      } 
+      else if (!isIndexUp && !isMiddleUp && !isRingUp && isPinkyUp) {
+        detectadoComando = "ALEGRE"; detectadoNome = "🤙 Hang Loose (Alegre)";
+      } 
+      else if (isIndexUp && isMiddleUp && isRingUp && !isPinkyUp) {
+        detectadoComando = "DEITAR"; detectadoNome = "🖖 Três Dedos (Deitar)";
+      } 
+      else if (!isIndexUp && isMiddleUp && isRingUp && isPinkyUp) {
+        detectadoComando = "ALONGAR"; detectadoNome = "👌 Sinal de OK (Alongar)";
+      }
+      else {
+        // Gesto não reconhecido = não faz nada de novo, mantém parado
+        detectadoComando = "PARAR"; detectadoNome = "⏳ Analisando...";
+      }
+    }
+
+    // SISTEMA ANTI-FLICKER (Debounce de 5 frames)
+    if (detectadoComando === filtroGestoRef.current.comando) {
+      filtroGestoRef.current.contagem++;
+    } else {
+      filtroGestoRef.current = { comando: detectadoComando, contagem: 1 };
+    }
+
+    // Se o gesto permaneceu o mesmo por 5 frames consecutivos
+    if (filtroGestoRef.current.contagem >= 5) {
+      setGestoNome(detectadoNome);
+      setComandoAtualVisao(detectadoComando);
+      enviarComando(detectadoComando);
+    }
+
+  }, []);
+
+  const processarFrameRef = useRef<() => void>(() => {});
+  processarFrameRef.current = async () => {
+    if (visaoAtivaRef.current && videoRef.current && handsRef.current) {
+      if (videoRef.current.readyState >= 2) {
+        try { await handsRef.current.send({ image: videoRef.current }); } catch {}
+      }
+      loopVisaoRef.current = requestAnimationFrame(processarFrameRef.current);
+    }
+  };
+
+  const iniciarVision = async () => {
+    if (!videoRef.current || !canvasRef.current) return;
+    const Hands = (window as any).Hands;
+    if (!Hands) return alert("Aguarde o carregamento das bibliotecas de IA...");
+    
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+      streamRef.current = stream; videoRef.current.srcObject = stream;
+      handsRef.current = new Hands({ locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
+      handsRef.current.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
+      handsRef.current.onResults(onResultsHand);
+      
+      videoRef.current.onloadedmetadata = () => {
+        if (videoRef.current && canvasRef.current) {
+          videoRef.current.play();
+          canvasRef.current.width = videoRef.current.videoWidth; 
+          canvasRef.current.height = videoRef.current.videoHeight;
+        }
+        visaoAtivaRef.current = true; setCameraLigada(true); processarFrameRef.current();
+      };
+    } catch (erro) { alert("Erro na câmera. Verifique se permitiu o acesso."); }
+  };
+
+  const desligarVision = () => {
+    visaoAtivaRef.current = false; cancelAnimationFrame(loopVisaoRef.current); 
+    if (streamRef.current) streamRef.current.getTracks().forEach(track => track.stop());
+    if (videoRef.current) videoRef.current.srcObject = null;
+    setCameraLigada(false); 
+    setComandoAtualVisao('PARAR'); setGestoNome('Nenhum'); enviarComando("PARAR");
+  };
+
+  // =========================================================================
+  // GESTÃO DE ABAS (Desliga ferramentas ao trocar)
+  // =========================================================================
   useEffect(() => {
     if (abaAtiva !== 'voz' && ouvindoVoz) alternarMicrofone();
+    if (abaAtiva !== 'visao' && cameraLigada) desligarVision();
+    // Ao trocar de aba, manda o robô parar por segurança
+    enviarComando("PARAR");
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [abaAtiva]);
 
@@ -163,24 +303,48 @@ function App() {
           </div>
 
           <div style={{ marginTop: '20px', padding: '20px', backgroundColor: '#333', borderRadius: '10px', display: 'inline-block', minWidth: '300px' }}>
-            <p style={{ margin: 0, fontSize: '18px', color: '#aaa' }}>Último comando recebido:</p>
+            <p style={{ margin: 0, fontSize: '18px', color: '#aaa' }}>Robô Executando:</p>
             <p style={{ margin: '10px 0 0 0', fontSize: '36px', fontWeight: 'bold', color: comandoAtualVoz === 'PARAR' ? '#dc3545' : '#17a2b8' }}>{comandoAtualVoz}</p>
           </div>
         </div>
       )}
 
-      {/* TELAS INATIVAS */}
-      {abaAtiva === 'manual' && (
-        <div style={{ marginTop: '30px', opacity: 0.5 }}>
-          <h2>Pilote o MiniBo Manualmente</h2>
-          <p style={{ color: '#ffcc00' }}>⚠️ Temporariamente desativado enquanto focamos na voz.</p>
+      {/* TELA DE VISÃO COMPUTACIONAL */}
+      {abaAtiva === 'visao' && (
+        <div style={{ marginTop: '30px' }}>
+          <h2>Reconhecimento de Gestos da Mão</h2>
+          <p style={{ color: '#aaa', fontSize: '14px', maxWidth: '600px', margin: '0 auto 20px auto' }}>
+            Faça gestos para controlar! Punho = Parar | Mão Aberta = Frente | Incline a mão aberta = Esquerda/Direita | 2 Dedos (Paz) = Trás | 1 Dedo = Sentar | Rock = Dançar | 3 Dedos = Deitar | HangLoose = Alegre
+          </p>
+          
+          <button onClick={cameraLigada ? desligarVision : iniciarVision} style={{ padding: '15px 30px', fontSize: '16px', backgroundColor: cameraLigada ? '#dc3545' : '#28a745', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', marginBottom: '20px' }}>
+            {cameraLigada ? '❌ Desligar Câmera' : '🤖 Ligar Câmera e IA'}
+          </button>
+          
+          <br />
+          
+          <div style={{ position: 'relative', width: '640px', height: '480px', margin: '0 auto', border: cameraLigada ? '3px solid #007bff' : '3px solid #555', borderRadius: '10px', backgroundColor: '#000', overflow: 'hidden' }}>
+            <video ref={videoRef} playsInline muted style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }} />
+            <canvas ref={canvasRef} width="640" height="480" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 10, transform: 'scaleX(-1)' }} />
+            
+            {cameraLigada && (
+              <div style={{ position: 'absolute', bottom: '20px', left: '20px', backgroundColor: 'rgba(0,0,0,0.85)', padding: '15px', borderRadius: '10px', textAlign: 'left', zIndex: 20, minWidth: '220px' }}>
+                <p style={{ margin: 0, fontSize: '14px', color: '#aaa' }}>Gesto Reconhecido:</p>
+                <p style={{ margin: '5px 0 10px 0', fontWeight: 'bold', color: '#ffff00', fontSize: '18px' }}>{gestoNome}</p>
+                <hr style={{ borderColor: '#444', margin: '10px 0' }} />
+                <p style={{ margin: 0, fontSize: '14px', color: '#aaa' }}>Comando Enviado:</p>
+                <p style={{ margin: '5px 0 0 0', fontWeight: 'bold', color: comandoAtualVisao === 'PARAR' ? '#dc3545' : '#17a2b8', fontSize: '24px' }}>{comandoAtualVisao}</p>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
-      {abaAtiva === 'visao' && (
+      {/* TELA DE CONTROLE MANUAL */}
+      {abaAtiva === 'manual' && (
         <div style={{ marginTop: '30px', opacity: 0.5 }}>
-          <h2>Pilote Arrastando a Mão pela Tela</h2>
-          <p style={{ color: '#ffcc00' }}>⚠️ Temporariamente desativado enquanto focamos na voz.</p>
+          <h2>Pilote o MiniBo Manualmente</h2>
+          <p style={{ color: '#ffcc00' }}>⚠️ Temporariamente desativado enquanto focamos na IA.</p>
         </div>
       )}
     </div>
