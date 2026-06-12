@@ -33,14 +33,22 @@ function App() {
 
   const ws = useRef<WebSocket | null>(null);
 
-  // Trava a rolagem da tela globalmente
+  // =========================================================================
+  // VACINA CSS (Anula os paddings fantasmas do Vite/React)
+  // =========================================================================
   useEffect(() => {
     document.body.style.margin = "0";
     document.body.style.padding = "0";
     document.body.style.overflow = "hidden";
-    document.body.style.backgroundColor = "#1e1e1e";
-    document.body.style.height = "100vh";
-    document.body.style.width = "100vw";
+    
+    // Mata o padding do #root que empurrava tudo para a direita
+    const rootNode = document.getElementById('root');
+    if (rootNode) {
+      rootNode.style.margin = "0";
+      rootNode.style.padding = "0";
+      rootNode.style.maxWidth = "none";
+      rootNode.style.width = "100%";
+    }
   }, []);
 
   // =========================================================================
@@ -144,7 +152,7 @@ function App() {
   };
 
   // =========================================================================
-  // 3. VISÃO COMPUTACIONAL
+  // 3. VISÃO COMPUTACIONAL (LÓGICA GEOMÉTRICA DE GESTOS)
   // =========================================================================
   const getDist = (p1: any, p2: any) => Math.hypot(p1.x - p2.x, p1.y - p2.y);
 
@@ -285,13 +293,17 @@ function App() {
   }, [abaAtiva]);
 
   // =========================================================================
-  // INTERFACE
+  // INTERFACE 100% BLINDADA E CENTRALIZADA
   // =========================================================================
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', overflow: 'hidden', color: 'white', fontFamily: 'Arial' }}>
+    <div style={{ 
+      position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', 
+      display: 'flex', flexDirection: 'column', alignItems: 'center', 
+      backgroundColor: '#1e1e1e', color: 'white', fontFamily: 'Arial', overflow: 'hidden' 
+    }}>
       
       {/* HEADER FIXO NO TOPO */}
-      <div style={{ padding: '10px 20px', textAlign: 'center', flexShrink: 0 }}>
+      <div style={{ width: '100%', padding: '10px 0', textAlign: 'center', flexShrink: 0 }}>
         <h2 style={{ margin: '5px 0' }}>MiniBo Painel</h2>
         <p style={{ margin: '0 0 10px 0', fontSize: '14px' }}>Rede: <strong>{statusWs}</strong></p>
         
@@ -303,11 +315,11 @@ function App() {
       </div>
 
       {/* ÁREA DE CONTEÚDO */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', position: 'relative', minHeight: 0, overflow: 'hidden' }}>
+      <div style={{ flex: 1, width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', position: 'relative', minHeight: 0 }}>
         
         {/* ================= ABA VOZ ================= */}
         {abaAtiva === 'voz' && (
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '20px', minHeight: 0, overflowY: 'hidden' }}>
+          <div style={{ flex: 1, width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 0 }}>
             <p style={{ color: '#aaa', textAlign: 'center', margin: '0 0 10px 0' }}>Diga: Frente, Trás, Esquerda, Direita, Sentar, Deitar, Alongar, Dançar, Alegre, Parar</p>
             <button onClick={alternarMicrofone} style={{ padding: '15px 30px', fontSize: '18px', color: 'white', border: 'none', borderRadius: '10px', cursor: 'pointer', backgroundColor: ouvindoVoz ? '#dc3545' : '#28a745', marginBottom: '15px' }}>
               {ouvindoVoz ? '🛑 Parar Ouvinte' : '🎙️ Ativar Ouvinte'}
@@ -322,16 +334,14 @@ function App() {
 
         {/* ================= ABA VISÃO ================= */}
         {abaAtiva === 'visao' && (
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', minHeight: 0, paddingBottom: '10px', width: '100%' }}>
+          <div style={{ flex: 1, width: '100%', maxWidth: '800px', display: 'flex', flexDirection: 'column', alignItems: 'center', minHeight: 0, paddingBottom: '20px' }}>
             
-            {/* Legenda de Gestos - Centralizada */}
             <div style={{ width: '100%', textAlign: 'center', flexShrink: 0, marginBottom: '10px', padding: '0 10px' }}>
               <p style={{ color: '#aaa', fontSize: '13px', margin: '0' }}>
                 ✊ Parar | 🖐️ Frente | ☝️ Esq | ✌️ Trás | 3️⃣ Dir | ✋ Deitar | 🖖 Sentar | 👌 Alongar | 🤘 Dançar | 🤙 Alegre
               </p>
             </div>
 
-            {/* Controles e Informações Físicos e Centralizados */}
             <div style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0, marginBottom: '10px' }}>
               <button onClick={cameraLigada ? desligarVision : iniciarVision} style={{ padding: '10px 20px', fontSize: '14px', backgroundColor: cameraLigada ? '#dc3545' : '#28a745', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', marginBottom: '10px' }}>
                 {cameraLigada ? '❌ Desligar Câmera' : '🤖 Ligar Câmera IA'}
@@ -354,7 +364,7 @@ function App() {
               </div>
             </div>
 
-            {/* A Câmera Clássica (Travada e 100% Centralizada) */}
+            {/* Câmera Centralizada Dinâmica */}
             <div style={{ position: 'relative', width: '100%', maxWidth: '640px', flex: 1, minHeight: 0, border: cameraLigada ? '3px solid #007bff' : '3px solid #555', borderRadius: '10px', backgroundColor: '#000', overflow: 'hidden' }}>
               <video ref={videoRef} playsInline muted style={{ width: '100%', height: '100%', objectFit: 'contain', transform: 'scaleX(-1)' }} />
               <canvas ref={canvasRef} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain', transform: 'scaleX(-1)' }} />
@@ -365,7 +375,7 @@ function App() {
 
         {/* ================= ABA MANUAL ================= */}
         {abaAtiva === 'manual' && (
-           <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 0 }}>
+           <div style={{ flex: 1, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 0 }}>
              <p style={{ color: '#ffcc00' }}>⚠️ Desativado temporariamente.</p>
            </div>
         )}
