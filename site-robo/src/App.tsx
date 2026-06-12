@@ -20,6 +20,7 @@ function App() {
   const [cameraLigada, setCameraLigada] = useState(false); 
   const [comandoAtualVisao, setComandoAtualVisao] = useState('PARAR');
   const [gestoNome, setGestoNome] = useState('Nenhum');
+  const [progressoIA, setProgressoIA] = useState(0); // Controle da barrinha verde (0 a 100)
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -28,27 +29,19 @@ function App() {
   const loopVisaoRef = useRef<number>(0); 
   const visaoAtivaRef = useRef<boolean>(false);
   
-  // Anti-Flicker
-  const filtroGestoRef = useRef({ comando: 'PARAR', contagem: 0 });
+  // Filtro de Tempo Real e Anti-Flicker
+  const filtroGestoRef = useRef({ comando: 'PARAR', nome: 'Nenhum', inicio: 0, ultimaVezVisto: 0 });
 
   const ws = useRef<WebSocket | null>(null);
 
-  // =========================================================================
-  // VACINA CSS (Anula os paddings fantasmas do Vite/React)
-  // =========================================================================
+  // Trava a rolagem da tela globalmente
   useEffect(() => {
     document.body.style.margin = "0";
     document.body.style.padding = "0";
     document.body.style.overflow = "hidden";
-    
-    // Mata o padding do #root que empurrava tudo para a direita
-    const rootNode = document.getElementById('root');
-    if (rootNode) {
-      rootNode.style.margin = "0";
-      rootNode.style.padding = "0";
-      rootNode.style.maxWidth = "none";
-      rootNode.style.width = "100%";
-    }
+    document.body.style.backgroundColor = "#1e1e1e";
+    document.body.style.height = "100vh";
+    document.body.style.width = "100vw";
   }, []);
 
   // =========================================================================
@@ -87,14 +80,11 @@ function App() {
   const enviarComando = (novoComando: string) => {
     if (novoComando !== comandoRoboRef.current) {
       const agora = Date.now();
-      
       if (novoComando !== "PARAR" && agora - ultimoEnvioRef.current < 1500) {
         return; 
       }
-
       comandoRoboRef.current = novoComando;
       ultimoEnvioRef.current = agora;
-      
       if (ws.current && ws.current.readyState === WebSocket.OPEN) {
         ws.current.send(novoComando);
       }
@@ -152,7 +142,7 @@ function App() {
   };
 
   // =========================================================================
-  // 3. VISÃO COMPUTACIONAL (LÓGICA GEOMÉTRICA DE GESTOS)
+  // 3. VISÃO COMPUTACIONAL (LÓGICA MATEMÁTICA ESTREITA)
   // =========================================================================
   const getDist = (p1: any, p2: any) => Math.hypot(p1.x - p2.x, p1.y - p2.y);
 
@@ -182,27 +172,30 @@ function App() {
 
       const wrist = landmarks[0];
       
-      const isIndexUp  = getDist(wrist, landmarks[8])  > getDist(wrist, landmarks[6]) * 1.1;
-      const isMiddleUp = getDist(wrist, landmarks[12]) > getDist(wrist, landmarks[10]) * 1.1;
-      const isRingUp   = getDist(wrist, landmarks[16]) > getDist(wrist, landmarks[14]) * 1.1;
-      const isPinkyUp  = getDist(wrist, landmarks[20]) > getDist(wrist, landmarks[18]) * 1.1;
+      // Precisão 2.0: Distância da ponta (8) até o pulso deve ser 20% maior que a junta da base (5)
+      const isIndexUp  = getDist(wrist, landmarks[8])  > getDist(wrist, landmarks[5]) * 1.2;
+      const isMiddleUp = getDist(wrist, landmarks[12]) > getDist(wrist, landmarks[9]) * 1.2;
+      const isRingUp   = getDist(wrist, landmarks[16]) > getDist(wrist, landmarks[13]) * 1.2;
+      const isPinkyUp  = getDist(wrist, landmarks[20]) > getDist(wrist, landmarks[17]) * 1.2;
 
-      const isThumbOut = getDist(landmarks[4], landmarks[17]) > getDist(landmarks[2], landmarks[17]);
+      // O polegar está para fora da palma? (Compara a base do mindinho)
+      const isThumbOut = getDist(landmarks[4], landmarks[17]) > getDist(landmarks[5], landmarks[17]) * 1.2;
 
-      const distThumbIndex = getDist(landmarks[4], landmarks[8]);
-      const isOkSign = distThumbIndex < 0.05 && isMiddleUp && isRingUp && isPinkyUp; 
+      // Sinais compostos
+      const isOkSign = getDist(landmarks[4], landmarks[8]) < getDist(landmarks[5], landmarks[9]); 
       
       const distMiddleRing = getDist(landmarks[12], landmarks[16]);
       const distIndexMiddle = getDist(landmarks[8], landmarks[12]);
-      const isStarTrek = isIndexUp && isMiddleUp && isRingUp && isPinkyUp && (distMiddleRing > distIndexMiddle * 1.8);
+      const isStarTrek = isIndexUp && isMiddleUp && isRingUp && isPinkyUp && (distMiddleRing > distIndexMiddle * 1.5);
 
-      if (isOkSign) {
+      // Hierarquia Exata
+      if (isOkSign && isMiddleUp && isRingUp && isPinkyUp) {
         detectadoComando = "ALONGAR"; detectadoNome = "👌 OK (Alongar)";
       } 
       else if (isStarTrek) {
         detectadoComando = "SENTAR"; detectadoNome = "🖖 Star Trek (Sentar)";
       } 
-      else if (isIndexUp && !isMiddleUp && !isRingUp && isPinkyUp) {
+      else if (isIndexUp && !isMiddleUp && !isRingUp && isPinkyUp && !isThumbOut) {
         detectadoComando = "DANCAR"; detectadoNome = "🤘 Rock (Dançar)";
       } 
       else if (!isIndexUp && !isMiddleUp && !isRingUp && isPinkyUp && isThumbOut) {
@@ -211,13 +204,13 @@ function App() {
       else if (!isIndexUp && !isMiddleUp && !isRingUp && !isPinkyUp && !isThumbOut) {
         detectadoComando = "PARAR"; detectadoNome = "✊ 0 Dedos (Parar)";
       } 
-      else if (isIndexUp && !isMiddleUp && !isRingUp && !isPinkyUp) {
+      else if (isIndexUp && !isMiddleUp && !isRingUp && !isPinkyUp && !isThumbOut) {
         detectadoComando = "ESQUERDA"; detectadoNome = "☝️ 1 Dedo (Esquerda)";
       } 
-      else if (isIndexUp && isMiddleUp && !isRingUp && !isPinkyUp) {
+      else if (isIndexUp && isMiddleUp && !isRingUp && !isPinkyUp && !isThumbOut) {
         detectadoComando = "TRAS"; detectadoNome = "✌️ 2 Dedos (Trás)";
       } 
-      else if (isIndexUp && isMiddleUp && isRingUp && !isPinkyUp) {
+      else if (isIndexUp && isMiddleUp && isRingUp && !isPinkyUp && !isThumbOut) {
         detectadoComando = "DIREITA"; detectadoNome = "3️⃣ 3 Dedos (Direita)";
       } 
       else if (isIndexUp && isMiddleUp && isRingUp && isPinkyUp && !isThumbOut) {
@@ -227,23 +220,46 @@ function App() {
         detectadoComando = "FRENTE"; detectadoNome = "🖐️ Mão Aberta (Frente)";
       } 
       else {
-        detectadoComando = "PARAR"; detectadoNome = "⏳ Lendo Mão...";
+        detectadoComando = "PARAR"; detectadoNome = "⏳ Analisando...";
       }
     }
 
-    if (detectadoComando === filtroGestoRef.current.comando) {
-      filtroGestoRef.current.contagem++;
+    // =====================================================================
+    // SISTEMA DE VALIDAÇÃO TEMPORAL DE 1.5s (Com tolerância Anti-Flicker)
+    // =====================================================================
+    const now = Date.now();
+    const filtro = filtroGestoRef.current;
+
+    if (detectadoComando === filtro.comando) {
+      // Se a IA está vendo o mesmo gesto, atualiza a última vez visto
+      filtro.ultimaVezVisto = now;
+      
+      const tempoSegurando = now - filtro.inicio;
+      const progresso = Math.min(100, (tempoSegurando / 1500) * 100);
+      setProgressoIA(progresso);
+
+      // Bateu 1.5 segundos na mesma pose? Executa!
+      if (tempoSegurando >= 1500) {
+        setGestoNome(detectadoNome); // Atualiza texto principal
+        if (comandoAtualVisao !== detectadoComando) {
+          setComandoAtualVisao(detectadoComando);
+          enviarComando(detectadoComando);
+        }
+      }
     } else {
-      filtroGestoRef.current = { comando: detectadoComando, contagem: 1 };
+      // Se a pose mudou, só consideramos uma "mudança real" se durar mais que 300ms.
+      // Isso impede que um "piscar" da câmera lendo a mão errada ressuscite o timer.
+      if (now - filtro.ultimaVezVisto > 300) {
+        filtroGestoRef.current = {
+          comando: detectadoComando,
+          nome: detectadoNome,
+          inicio: now,
+          ultimaVezVisto: now
+        };
+        setProgressoIA(0); // Zera a barra
+      }
     }
-
-    if (filtroGestoRef.current.contagem >= 15) {
-      setGestoNome(detectadoNome);
-      setComandoAtualVisao(detectadoComando);
-      enviarComando(detectadoComando);
-    }
-
-  }, []);
+  }, [comandoAtualVisao]); // Dependência atualizada
 
   const processarFrameRef = useRef<() => void>(() => {});
   processarFrameRef.current = async () => {
@@ -282,7 +298,7 @@ function App() {
     visaoAtivaRef.current = false; cancelAnimationFrame(loopVisaoRef.current); 
     if (streamRef.current) streamRef.current.getTracks().forEach(track => track.stop());
     if (videoRef.current) videoRef.current.srcObject = null;
-    setCameraLigada(false); setComandoAtualVisao('PARAR'); setGestoNome('Nenhum'); enviarComando("PARAR");
+    setCameraLigada(false); setComandoAtualVisao('PARAR'); setGestoNome('Nenhum'); setProgressoIA(0); enviarComando("PARAR");
   };
 
   useEffect(() => {
@@ -293,7 +309,7 @@ function App() {
   }, [abaAtiva]);
 
   // =========================================================================
-  // INTERFACE 100% BLINDADA E CENTRALIZADA
+  // INTERFACE
   // =========================================================================
   return (
     <div style={{ 
@@ -302,7 +318,7 @@ function App() {
       backgroundColor: '#1e1e1e', color: 'white', fontFamily: 'Arial', overflow: 'hidden' 
     }}>
       
-      {/* HEADER FIXO NO TOPO */}
+      {/* HEADER FIXO */}
       <div style={{ width: '100%', padding: '10px 0', textAlign: 'center', flexShrink: 0 }}>
         <h2 style={{ margin: '5px 0' }}>MiniBo Painel</h2>
         <p style={{ margin: '0 0 10px 0', fontSize: '14px' }}>Rede: <strong>{statusWs}</strong></p>
@@ -347,24 +363,29 @@ function App() {
                 {cameraLigada ? '❌ Desligar Câmera' : '🤖 Ligar Câmera IA'}
               </button>
               
-              <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '20px', backgroundColor: '#222', padding: '10px 20px', borderRadius: '8px', border: '1px solid #444', minWidth: '280px' }}>
-                <div style={{ textAlign: 'center', flex: 1 }}>
-                  <p style={{ margin: 0, fontSize: '12px', color: '#aaa' }}>Gesto</p>
-                  <p style={{ margin: '2px 0 0 0', fontWeight: 'bold', color: '#ffff00', fontSize: '14px', minHeight: '16px' }}>
-                    {cameraLigada ? gestoNome : 'Câmera Desligada'}
-                  </p>
+              <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', backgroundColor: '#222', padding: '10px 20px', borderRadius: '8px', border: '1px solid #444', minWidth: '280px' }}>
+                <div style={{ display: 'flex', width: '100%', justifyContent: 'space-between', gap: '20px' }}>
+                  <div style={{ textAlign: 'center', flex: 1 }}>
+                    <p style={{ margin: 0, fontSize: '12px', color: '#aaa' }}>Lendo Gesto...</p>
+                    <p style={{ margin: '2px 0 0 0', fontWeight: 'bold', color: '#ffff00', fontSize: '14px', minHeight: '16px' }}>
+                      {cameraLigada ? filtroGestoRef.current.nome : 'Câmera Desligada'}
+                    </p>
+                  </div>
+                  <div style={{ width: '1px', height: '30px', backgroundColor: '#555' }}></div>
+                  <div style={{ textAlign: 'center', flex: 1 }}>
+                    <p style={{ margin: 0, fontSize: '12px', color: '#aaa' }}>Ação Confirmada</p>
+                    <p style={{ margin: '2px 0 0 0', fontWeight: 'bold', color: comandoAtualVisao === 'PARAR' ? '#dc3545' : '#17a2b8', fontSize: '18px' }}>
+                      {cameraLigada ? comandoAtualVisao : 'PARAR'}
+                    </p>
+                  </div>
                 </div>
-                <div style={{ width: '1px', height: '30px', backgroundColor: '#555' }}></div>
-                <div style={{ textAlign: 'center', flex: 1 }}>
-                  <p style={{ margin: 0, fontSize: '12px', color: '#aaa' }}>Comando</p>
-                  <p style={{ margin: '2px 0 0 0', fontWeight: 'bold', color: comandoAtualVisao === 'PARAR' ? '#dc3545' : '#17a2b8', fontSize: '18px' }}>
-                    {cameraLigada ? comandoAtualVisao : 'PARAR'}
-                  </p>
+                {/* BARRA DE CARREGAMENTO (1.5s) */}
+                <div style={{ width: '100%', height: '4px', backgroundColor: '#444', borderRadius: '2px', marginTop: '10px', overflow: 'hidden' }}>
+                  <div style={{ width: `${progressoIA}%`, height: '100%', backgroundColor: progressoIA === 100 ? '#17a2b8' : '#28a745', transition: 'width 0.1s linear' }}></div>
                 </div>
               </div>
             </div>
 
-            {/* Câmera Centralizada Dinâmica */}
             <div style={{ position: 'relative', width: '100%', maxWidth: '640px', flex: 1, minHeight: 0, border: cameraLigada ? '3px solid #007bff' : '3px solid #555', borderRadius: '10px', backgroundColor: '#000', overflow: 'hidden' }}>
               <video ref={videoRef} playsInline muted style={{ width: '100%', height: '100%', objectFit: 'contain', transform: 'scaleX(-1)' }} />
               <canvas ref={canvasRef} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain', transform: 'scaleX(-1)' }} />
