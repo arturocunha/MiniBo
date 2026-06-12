@@ -302,12 +302,12 @@ function App() {
         </div>
       </div>
 
-      {/* ÁREA DE CONTEÚDO (Usa minHeight: 0 para nunca estourar o limite da tela) */}
+      {/* ÁREA DE CONTEÚDO */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', position: 'relative', minHeight: 0, overflow: 'hidden' }}>
         
         {/* ================= ABA VOZ ================= */}
         {abaAtiva === 'voz' && (
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '20px', minHeight: 0, overflowY: 'auto' }}>
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '20px', minHeight: 0, overflowY: 'hidden' }}>
             <p style={{ color: '#aaa', textAlign: 'center', margin: '0 0 10px 0' }}>Diga: Frente, Trás, Esquerda, Direita, Sentar, Deitar, Alongar, Dançar, Alegre, Parar</p>
             <button onClick={alternarMicrofone} style={{ padding: '15px 30px', fontSize: '18px', color: 'white', border: 'none', borderRadius: '10px', cursor: 'pointer', backgroundColor: ouvindoVoz ? '#dc3545' : '#28a745', marginBottom: '15px' }}>
               {ouvindoVoz ? '🛑 Parar Ouvinte' : '🎙️ Ativar Ouvinte'}
@@ -322,28 +322,35 @@ function App() {
 
         {/* ================= ABA VISÃO ================= */}
         {abaAtiva === 'visao' && (
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', minHeight: 0, paddingBottom: '10px' }}>
             
-            <div style={{ padding: '10px', textAlign: 'center', flexShrink: 0 }}>
-              <button onClick={cameraLigada ? desligarVision : iniciarVision} style={{ padding: '10px 20px', fontSize: '14px', backgroundColor: cameraLigada ? '#dc3545' : '#28a745', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>
+            {/* Controles e Informações (Sempre visíveis no topo da aba) */}
+            <div style={{ width: '100%', textAlign: 'center', flexShrink: 0, marginBottom: '10px' }}>
+              <button onClick={cameraLigada ? desligarVision : iniciarVision} style={{ padding: '10px 20px', fontSize: '14px', backgroundColor: cameraLigada ? '#dc3545' : '#28a745', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', marginBottom: '10px' }}>
                 {cameraLigada ? '❌ Desligar Câmera' : '🤖 Ligar Câmera IA'}
               </button>
-            </div>
-
-            {/* O Container de Vídeo agora é forçado a ficar dentro do espaço disponível */}
-            <div style={{ flex: 1, position: 'relative', backgroundColor: '#000', minHeight: 0, overflow: 'hidden' }}>
-              <video ref={videoRef} playsInline muted style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain', transform: 'scaleX(-1)' }} />
-              <canvas ref={canvasRef} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain', transform: 'scaleX(-1)' }} />
               
               {cameraLigada && (
-                <div style={{ position: 'absolute', top: '15px', left: '15px', backgroundColor: 'rgba(0,0,0,0.7)', padding: '10px 15px', borderRadius: '8px', zIndex: 20 }}>
-                  <p style={{ margin: 0, fontSize: '12px', color: '#aaa' }}>Gesto:</p>
-                  <p style={{ margin: '2px 0 5px 0', fontWeight: 'bold', color: '#ffff00', fontSize: '16px' }}>{gestoNome}</p>
-                  <p style={{ margin: 0, fontSize: '12px', color: '#aaa' }}>Comando:</p>
-                  <p style={{ margin: '2px 0 0 0', fontWeight: 'bold', color: comandoAtualVisao === 'PARAR' ? '#dc3545' : '#17a2b8', fontSize: '18px' }}>{comandoAtualVisao}</p>
+                <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '20px', backgroundColor: '#222', padding: '10px 20px', borderRadius: '8px', border: '1px solid #444', width: 'fit-content', margin: '0 auto' }}>
+                  <div style={{ textAlign: 'right' }}>
+                    <p style={{ margin: 0, fontSize: '12px', color: '#aaa' }}>Gesto Reconhecido</p>
+                    <p style={{ margin: '2px 0 0 0', fontWeight: 'bold', color: '#ffff00', fontSize: '16px' }}>{gestoNome}</p>
+                  </div>
+                  <div style={{ width: '1px', height: '30px', backgroundColor: '#555' }}></div>
+                  <div style={{ textAlign: 'left' }}>
+                    <p style={{ margin: 0, fontSize: '12px', color: '#aaa' }}>Comando</p>
+                    <p style={{ margin: '2px 0 0 0', fontWeight: 'bold', color: comandoAtualVisao === 'PARAR' ? '#dc3545' : '#17a2b8', fontSize: '18px' }}>{comandoAtualVisao}</p>
+                  </div>
                 </div>
               )}
             </div>
+
+            {/* A Câmera Clássica de 640x480 (Encolhe se não tiver espaço, sem quebrar layout) */}
+            <div style={{ position: 'relative', width: '100%', maxWidth: '640px', flex: 1, minHeight: 0, border: cameraLigada ? '3px solid #007bff' : '3px solid #555', borderRadius: '10px', backgroundColor: '#000', overflow: 'hidden' }}>
+              <video ref={videoRef} playsInline muted style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }} />
+              <canvas ref={canvasRef} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }} />
+            </div>
+
           </div>
         )}
 
