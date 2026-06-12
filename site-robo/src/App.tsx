@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import './App.css';
 
 function App() {
@@ -9,33 +9,14 @@ function App() {
   const [comandoAtualVoz, setComandoAtualVoz] = useState('PARAR');
   const [ouvindoVoz, setOuvindoVoz] = useState(false);
   const [fraseOuvida, setFraseOuvida] = useState('');
-  
-  // Estados Visão / Manual (Mantidos para a UI, mas inativos no backend por enquanto)
-  const [cameraLigada, setCameraLigada] = useState(false); 
-  const [infoJoystick, setInfoJoystick] = useState({ speed: 0, turn: 0, l: 0, r: 0 });
-  const [posicaoJoy, setPosicaoJoy] = useState({ x: 0, y: 0 });
-  const [zonaAtual, setZonaAtual] = useState<string>('PARADO');
 
   // Referências principais
   const ws = useRef<WebSocket | null>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const streamRef = useRef<MediaStream | null>(null); 
-  
-  const handsRef = useRef<any>(null); 
-  const loopVisaoRef = useRef<number>(0); 
-  const visaoAtivaRef = useRef<boolean>(false);
-
   const recognitionRef = useRef<any>(null); 
   const ouvindoRef = useRef(false); 
   
-  // NOVO: Armazena a String exata que vai ser enviada para o ESP32
+  // Armazena a String exata que vai ser enviada para o ESP32
   const comandoRoboRef = useRef<string>("PARAR");
-
-  // Controles do Modo Manual
-  const teclasRef = useRef({ w: false, a: false, s: false, d: false });
-  const joyAtivoRef = useRef(false);
-  const areaJoyRef = useRef<HTMLDivElement>(null);
 
   // =========================================================================
   // 1. LIGAÇÃO WEBSOCKET E TRANSMISSÃO CONTÍNUA
@@ -58,14 +39,14 @@ function App() {
 
     conectar();
 
-    // Coração do Robô: Agora envia apenas a PALAVRA DE COMANDO atual
+    // Coração do Robô: Envia apenas a PALAVRA DE COMANDO atual
     const transmissor = setInterval(() => {
       if (ws.current && ws.current.readyState === WebSocket.OPEN) {
         if (abaAtiva === 'voz') {
           ws.current.send(comandoRoboRef.current);
         }
       }
-    }, 150); // Envia a cada 150ms para manter a conexão e garantir a execução
+    }, 150);
 
     return () => {
       clearInterval(transmissor);
@@ -74,18 +55,7 @@ function App() {
   }, [abaAtiva]);
 
   // =========================================================================
-  // 2. MODO MANUAL (Desativado no Transmissor temporariamente)
-  // =========================================================================
-  const atualizarMotoresManual = useCallback((joyX = 0, joyY = 0) => {
-    // A lógica de UI se mantém, mas não enviaremos isso ao robô ainda.
-  }, []);
-
-  const handleTouchStart = (e: any) => { joyAtivoRef.current = true; moverJoystick(e); };
-  const moverJoystick = (e: any) => { /* UI mantida, omitido por brevidade visual */ };
-  const handleTouchEnd = () => { joyAtivoRef.current = false; setPosicaoJoy({ x: 0, y: 0 }); };
-
-  // =========================================================================
-  // 3. COMANDO DE VOZ (REFORMULADO)
+  // 2. COMANDO DE VOZ (REFORMULADO PARA TEXTO)
   // =========================================================================
   useEffect(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -103,8 +73,7 @@ function App() {
         const fala = event.results[lastIndex][0].transcript.toLowerCase().trim();
         setFraseOuvida(fala);
         
-        // Mapeamento das palavras ouvidas para os comandos do ESP32
-        let novoComando = comandoRoboRef.current; // Mantém o atual por padrão
+        let novoComando = comandoRoboRef.current; 
 
         if (/\b(frente|avançar|vai|andar)\b/.test(fala)) novoComando = "FRENTE";
         else if (/\b(esquerda|left)\b/.test(fala)) novoComando = "ESQUERDA";
@@ -117,7 +86,6 @@ function App() {
         else if (/\b(feliz|alegre|abana|fofo)\b/.test(fala)) novoComando = "ALEGRE";
         else if (/\b(para|pare|parar|stop)\b/.test(fala)) novoComando = "PARAR";
 
-        // Atualiza a interface e a referência que vai para o WebSocket
         setComandoAtualVoz(novoComando);
         comandoRoboRef.current = novoComando;
       };
@@ -135,7 +103,7 @@ function App() {
       setOuvindoVoz(false); 
       recognitionRef.current.stop(); 
       
-      comandoRoboRef.current = "PARAR"; // Trava o robô ao desligar o mic
+      comandoRoboRef.current = "PARAR"; 
       setComandoAtualVoz("PARAR"); 
       setFraseOuvida('');
     } else { 
@@ -145,15 +113,8 @@ function App() {
     }
   };
 
-  // =========================================================================
-  // 4. VISÃO COMPUTACIONAL (Desativado no Transmissor temporariamente)
-  // =========================================================================
-  const onResultsHand = useCallback((results: any) => { /* Lógica UI mantida */ }, []);
-  const iniciarVision = async () => { /* Lógica UI mantida */ };
-  const desligarVision = () => { /* Lógica UI mantida */ };
-
+  // Trava o robô e desliga o mic se mudar de aba
   useEffect(() => {
-    if (abaAtiva !== 'visao') desligarVision();
     if (abaAtiva !== 'voz' && ouvindoVoz) alternarMicrofone();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [abaAtiva]);
@@ -197,7 +158,7 @@ function App() {
         </div>
       )}
 
-      {/* TELA DE CONTROLE MANUAL (Inativa no backend) */}
+      {/* TELAS INATIVAS */}
       {abaAtiva === 'manual' && (
         <div style={{ marginTop: '30px', opacity: 0.5 }}>
           <h2>Pilote o MiniBo Manualmente</h2>
@@ -205,7 +166,6 @@ function App() {
         </div>
       )}
 
-      {/* TELA DE VISÃO COMPUTACIONAL (Inativa no backend) */}
       {abaAtiva === 'visao' && (
         <div style={{ marginTop: '30px', opacity: 0.5 }}>
           <h2>Pilote Arrastando a Mão pela Tela</h2>
