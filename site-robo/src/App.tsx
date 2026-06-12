@@ -27,7 +27,7 @@ function App() {
   const loopVisaoRef = useRef<number>(0); 
   const visaoAtivaRef = useRef<boolean>(false);
   
-  // Anti-Flicker: Exige que o gesto se mantenha igual por X frames antes de enviar
+  // Anti-Flicker: Exige que o gesto se mantenha igual por 5 frames seguidos
   const filtroGestoRef = useRef({ comando: 'PARAR', contagem: 0 });
 
   const ws = useRef<WebSocket | null>(null);
@@ -125,7 +125,7 @@ function App() {
   };
 
   // =========================================================================
-  // 3. VISÃO COMPUTACIONAL (MÃOS / GESTOS)
+  // 3. VISÃO COMPUTACIONAL (LÓGICA GEOMÉTRICA DE GESTOS)
   // =========================================================================
   const onResultsHand = useCallback((results: any) => {
     if (!canvasRef.current || !visaoAtivaRef.current) return;
@@ -142,9 +142,8 @@ function App() {
     if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
       const landmarks = results.multiHandLandmarks[0];
 
-      // Desenha o esqueleto holográfico da mão
+      // Desenha as bolinhas verdes nas juntas
       canvasCtx.save();
-      // O Canvas está com scaleX(-1) no CSS, então aqui só desenhamos normal
       for (let i = 0; i < 21; i++) {
         const x = landmarks[i].x * W;
         const y = landmarks[i].y * H;
@@ -155,61 +154,78 @@ function App() {
       }
       canvasCtx.restore();
 
-      // DEDOS LEVANTADOS (A coordenada Y cresce para baixo. Y menor = dedo esticado)
+      // MÁGICA 1: Saber quais dedos estão esticados (Ponta do dedo acima da base)
       const isIndexUp = landmarks[8].y < landmarks[6].y;
       const isMiddleUp = landmarks[12].y < landmarks[10].y;
       const isRingUp = landmarks[16].y < landmarks[14].y;
       const isPinkyUp = landmarks[20].y < landmarks[18].y;
 
-      // Inclinação do Pulso (Landmark 0) para o dedo do meio (Landmark 9)
-      const tiltX = landmarks[9].x - landmarks[0].x;
+      // MÁGICA 2: Saber se o polegar está aberto ou dobrado para dentro
+      const isThumbOut = Math.abs(landmarks[4].x - landmarks[9].x) > Math.abs(landmarks[3].x - landmarks[9].x);
 
-      // LOGICA DE GESTOS
-      if (!isIndexUp && !isMiddleUp && !isRingUp && !isPinkyUp) {
-        detectadoComando = "PARAR"; detectadoNome = "✊ Punho (Parar)";
+      // MÁGICA 3: Medir distâncias entre as pontas dos dedos para sinais especiais
+      // Distância Polegar - Indicador (Para o sinal de OK)
+      const distThumbIndex = Math.hypot(landmarks[8].x - landmarks[4].x, landmarks[8].y - landmarks[4].y);
+      const isOkSign = distThumbIndex < 0.08; // Se estiverem muito próximos
+
+      // Distâncias para o Star Trek (Buraco entre dedo médio e anelar)
+      const distMiddleRing = Math.hypot(landmarks[12].x - landmarks[16].x, landmarks[12].y - landmarks[16].y);
+      const distIndexMiddle = Math.hypot(landmarks[8].x - landmarks[12].x, landmarks[8].y - landmarks[12].y);
+      const distRingPinky = Math.hypot(landmarks[16].x - landmarks[20].x, landmarks[16].y - landmarks[20].y);
+      
+      const isStarTrek = isIndexUp && isMiddleUp && isRingUp && isPinkyUp && 
+                         (distMiddleRing > distIndexMiddle * 1.5) && 
+                         (distMiddleRing > distRingPinky * 1.5);
+
+      // ==============================================================
+      // NOVO DICIONÁRIO DE GESTOS DO MINIBO (Por prioridade)
+      // ==============================================================
+      if (isOkSign && isMiddleUp && isRingUp && isPinkyUp) {
+        detectadoComando = "ALONGAR"; detectadoNome = "👌 Sinal de OK (Alongar)";
       } 
-      else if (isIndexUp && isMiddleUp && isRingUp && isPinkyUp) {
-        // Mão Aberta: Checa inclinação para Curvas
-        if (tiltX < -0.15) {
-          detectadoComando = "DIREITA"; detectadoNome = "👉 Inclinada Direita";
-        } else if (tiltX > 0.15) {
-          detectadoComando = "ESQUERDA"; detectadoNome = "👈 Inclinada Esquerda";
-        } else {
-          detectadoComando = "FRENTE"; detectadoNome = "🖐️ Mão Aberta (Frente)";
-        }
-      } 
-      else if (isIndexUp && isMiddleUp && !isRingUp && !isPinkyUp) {
-        detectadoComando = "TRAS"; detectadoNome = "✌️ Paz e Amor (Trás)";
-      } 
-      else if (isIndexUp && !isMiddleUp && !isRingUp && !isPinkyUp) {
-        detectadoComando = "SENTAR"; detectadoNome = "☝️ Indicador (Sentar)";
+      else if (isStarTrek) {
+        detectadoComando = "SENTAR"; detectadoNome = "🖖 Star Trek (Sentar)";
       } 
       else if (isIndexUp && !isMiddleUp && !isRingUp && isPinkyUp) {
         detectadoComando = "DANCAR"; detectadoNome = "🤘 Rock (Dançar)";
       } 
-      else if (!isIndexUp && !isMiddleUp && !isRingUp && isPinkyUp) {
+      else if (!isIndexUp && !isMiddleUp && !isRingUp && isPinkyUp && isThumbOut) {
         detectadoComando = "ALEGRE"; detectadoNome = "🤙 Hang Loose (Alegre)";
       } 
-      else if (isIndexUp && isMiddleUp && isRingUp && !isPinkyUp) {
-        detectadoComando = "DEITAR"; detectadoNome = "🖖 Três Dedos (Deitar)";
+      else if (!isIndexUp && !isMiddleUp && !isRingUp && !isPinkyUp) {
+        detectadoComando = "PARAR"; detectadoNome = "✊ Mão Fechada (Parar)";
       } 
-      else if (!isIndexUp && isMiddleUp && isRingUp && isPinkyUp) {
-        detectadoComando = "ALONGAR"; detectadoNome = "👌 Sinal de OK (Alongar)";
+      else if (isIndexUp && !isMiddleUp && !isRingUp && !isPinkyUp) {
+        detectadoComando = "ESQUERDA"; detectadoNome = "☝️ 1 Dedo (Esquerda)";
+      } 
+      else if (isIndexUp && isMiddleUp && !isRingUp && !isPinkyUp) {
+        detectadoComando = "TRAS"; detectadoNome = "✌️ 2 Dedos (Trás)";
+      } 
+      else if (isIndexUp && isMiddleUp && isRingUp && !isPinkyUp) {
+        detectadoComando = "DIREITA"; detectadoNome = "3️⃣ 3 Dedos (Direita)";
+      } 
+      else if (isIndexUp && isMiddleUp && isRingUp && isPinkyUp) {
+        // Se 4 dedos estão pra cima, a diferença é o polegar (Aberto = 5, Fechado = 4)
+        if (isThumbOut) {
+          detectadoComando = "FRENTE"; detectadoNome = "🖐️ Mão Aberta (Frente)";
+        } else {
+          detectadoComando = "DEITAR"; detectadoNome = "✋ 4 Dedos (Deitar)";
+        }
       }
       else {
-        // Gesto não reconhecido = não faz nada de novo, mantém parado
+        // Gesto de transição confuso
         detectadoComando = "PARAR"; detectadoNome = "⏳ Analisando...";
       }
     }
 
-    // SISTEMA ANTI-FLICKER (Debounce de 5 frames)
+    // SISTEMA ANTI-FLICKER (Debounce)
     if (detectadoComando === filtroGestoRef.current.comando) {
       filtroGestoRef.current.contagem++;
     } else {
       filtroGestoRef.current = { comando: detectadoComando, contagem: 1 };
     }
 
-    // Se o gesto permaneceu o mesmo por 5 frames consecutivos
+    // Só consolida o envio se a mão ficou parada no mesmo gesto por uns 5 frames
     if (filtroGestoRef.current.contagem >= 5) {
       setGestoNome(detectadoNome);
       setComandoAtualVisao(detectadoComando);
@@ -265,7 +281,6 @@ function App() {
   useEffect(() => {
     if (abaAtiva !== 'voz' && ouvindoVoz) alternarMicrofone();
     if (abaAtiva !== 'visao' && cameraLigada) desligarVision();
-    // Ao trocar de aba, manda o robô parar por segurança
     enviarComando("PARAR");
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [abaAtiva]);
@@ -314,11 +329,11 @@ function App() {
         <div style={{ marginTop: '30px' }}>
           <h2>Reconhecimento de Gestos da Mão</h2>
           <p style={{ color: '#aaa', fontSize: '14px', maxWidth: '600px', margin: '0 auto 20px auto' }}>
-            Faça gestos para controlar! Punho = Parar | Mão Aberta = Frente | Incline a mão aberta = Esquerda/Direita | 2 Dedos (Paz) = Trás | 1 Dedo = Sentar | Rock = Dançar | 3 Dedos = Deitar | HangLoose = Alegre
+            Faça gestos na câmera! Punho = Parar | Mão Aberta = Frente | 1 Dedo = Esquerda | 2 Dedos = Trás | 3 Dedos = Direita | 4 Dedos = Deitar | Star Trek = Sentar | OK = Alongar | Rock = Dançar | Hang Loose = Alegre
           </p>
           
           <button onClick={cameraLigada ? desligarVision : iniciarVision} style={{ padding: '15px 30px', fontSize: '16px', backgroundColor: cameraLigada ? '#dc3545' : '#28a745', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', marginBottom: '20px' }}>
-            {cameraLigada ? '❌ Desligar Câmera' : '🤖 Ligar Câmera e IA'}
+            {cameraLigada ? '❌ Desligar Câmera' : '🤖 Ligar IA de Mão'}
           </button>
           
           <br />
@@ -329,10 +344,10 @@ function App() {
             
             {cameraLigada && (
               <div style={{ position: 'absolute', bottom: '20px', left: '20px', backgroundColor: 'rgba(0,0,0,0.85)', padding: '15px', borderRadius: '10px', textAlign: 'left', zIndex: 20, minWidth: '220px' }}>
-                <p style={{ margin: 0, fontSize: '14px', color: '#aaa' }}>Gesto Reconhecido:</p>
+                <p style={{ margin: 0, fontSize: '14px', color: '#aaa' }}>Gesto Detectado:</p>
                 <p style={{ margin: '5px 0 10px 0', fontWeight: 'bold', color: '#ffff00', fontSize: '18px' }}>{gestoNome}</p>
                 <hr style={{ borderColor: '#444', margin: '10px 0' }} />
-                <p style={{ margin: 0, fontSize: '14px', color: '#aaa' }}>Comando Enviado:</p>
+                <p style={{ margin: 0, fontSize: '14px', color: '#aaa' }}>Ação do Robô:</p>
                 <p style={{ margin: '5px 0 0 0', fontWeight: 'bold', color: comandoAtualVisao === 'PARAR' ? '#dc3545' : '#17a2b8', fontSize: '24px' }}>{comandoAtualVisao}</p>
               </div>
             )}
