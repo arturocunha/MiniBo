@@ -33,7 +33,7 @@ function App() {
 
   const ws = useRef<WebSocket | null>(null);
 
-  // Trava a rolagem da tela globalmente direto no body
+  // Trava a rolagem da tela globalmente
   useEffect(() => {
     document.body.style.margin = "0";
     document.body.style.padding = "0";
@@ -144,7 +144,7 @@ function App() {
   };
 
   // =========================================================================
-  // 3. VISÃO COMPUTACIONAL (LÓGICA GEOMÉTRICA DE GESTOS)
+  // 3. VISÃO COMPUTACIONAL
   // =========================================================================
   const getDist = (p1: any, p2: any) => Math.hypot(p1.x - p2.x, p1.y - p2.y);
 
@@ -285,7 +285,7 @@ function App() {
   }, [abaAtiva]);
 
   // =========================================================================
-  // INTERFACE 100% BLINDADA CONTRA SCROLL (100vh rígido)
+  // INTERFACE
   // =========================================================================
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', overflow: 'hidden', color: 'white', fontFamily: 'Arial' }}>
@@ -322,33 +322,42 @@ function App() {
 
         {/* ================= ABA VISÃO ================= */}
         {abaAtiva === 'visao' && (
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', minHeight: 0, paddingBottom: '10px' }}>
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', minHeight: 0, paddingBottom: '10px', width: '100%' }}>
             
-            {/* Controles e Informações (Sempre visíveis no topo da aba) */}
-            <div style={{ width: '100%', textAlign: 'center', flexShrink: 0, marginBottom: '10px' }}>
+            {/* Legenda de Gestos - Centralizada */}
+            <div style={{ width: '100%', textAlign: 'center', flexShrink: 0, marginBottom: '10px', padding: '0 10px' }}>
+              <p style={{ color: '#aaa', fontSize: '13px', margin: '0' }}>
+                ✊ Parar | 🖐️ Frente | ☝️ Esq | ✌️ Trás | 3️⃣ Dir | ✋ Deitar | 🖖 Sentar | 👌 Alongar | 🤘 Dançar | 🤙 Alegre
+              </p>
+            </div>
+
+            {/* Controles e Informações Físicos e Centralizados */}
+            <div style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0, marginBottom: '10px' }}>
               <button onClick={cameraLigada ? desligarVision : iniciarVision} style={{ padding: '10px 20px', fontSize: '14px', backgroundColor: cameraLigada ? '#dc3545' : '#28a745', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', marginBottom: '10px' }}>
                 {cameraLigada ? '❌ Desligar Câmera' : '🤖 Ligar Câmera IA'}
               </button>
               
-              {cameraLigada && (
-                <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '20px', backgroundColor: '#222', padding: '10px 20px', borderRadius: '8px', border: '1px solid #444', width: 'fit-content', margin: '0 auto' }}>
-                  <div style={{ textAlign: 'right' }}>
-                    <p style={{ margin: 0, fontSize: '12px', color: '#aaa' }}>Gesto Reconhecido</p>
-                    <p style={{ margin: '2px 0 0 0', fontWeight: 'bold', color: '#ffff00', fontSize: '16px' }}>{gestoNome}</p>
-                  </div>
-                  <div style={{ width: '1px', height: '30px', backgroundColor: '#555' }}></div>
-                  <div style={{ textAlign: 'left' }}>
-                    <p style={{ margin: 0, fontSize: '12px', color: '#aaa' }}>Comando</p>
-                    <p style={{ margin: '2px 0 0 0', fontWeight: 'bold', color: comandoAtualVisao === 'PARAR' ? '#dc3545' : '#17a2b8', fontSize: '18px' }}>{comandoAtualVisao}</p>
-                  </div>
+              <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '20px', backgroundColor: '#222', padding: '10px 20px', borderRadius: '8px', border: '1px solid #444', minWidth: '280px' }}>
+                <div style={{ textAlign: 'center', flex: 1 }}>
+                  <p style={{ margin: 0, fontSize: '12px', color: '#aaa' }}>Gesto</p>
+                  <p style={{ margin: '2px 0 0 0', fontWeight: 'bold', color: '#ffff00', fontSize: '14px', minHeight: '16px' }}>
+                    {cameraLigada ? gestoNome : 'Câmera Desligada'}
+                  </p>
                 </div>
-              )}
+                <div style={{ width: '1px', height: '30px', backgroundColor: '#555' }}></div>
+                <div style={{ textAlign: 'center', flex: 1 }}>
+                  <p style={{ margin: 0, fontSize: '12px', color: '#aaa' }}>Comando</p>
+                  <p style={{ margin: '2px 0 0 0', fontWeight: 'bold', color: comandoAtualVisao === 'PARAR' ? '#dc3545' : '#17a2b8', fontSize: '18px' }}>
+                    {cameraLigada ? comandoAtualVisao : 'PARAR'}
+                  </p>
+                </div>
+              </div>
             </div>
 
-            {/* A Câmera Clássica de 640x480 (Encolhe se não tiver espaço, sem quebrar layout) */}
+            {/* A Câmera Clássica (Travada e 100% Centralizada) */}
             <div style={{ position: 'relative', width: '100%', maxWidth: '640px', flex: 1, minHeight: 0, border: cameraLigada ? '3px solid #007bff' : '3px solid #555', borderRadius: '10px', backgroundColor: '#000', overflow: 'hidden' }}>
-              <video ref={videoRef} playsInline muted style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }} />
-              <canvas ref={canvasRef} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }} />
+              <video ref={videoRef} playsInline muted style={{ width: '100%', height: '100%', objectFit: 'contain', transform: 'scaleX(-1)' }} />
+              <canvas ref={canvasRef} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain', transform: 'scaleX(-1)' }} />
             </div>
 
           </div>
