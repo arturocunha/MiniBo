@@ -33,12 +33,14 @@ function App() {
 
   const ws = useRef<WebSocket | null>(null);
 
-  // Trava a rolagem da tela globalmente
+  // Trava a rolagem da tela globalmente direto no body
   useEffect(() => {
     document.body.style.margin = "0";
     document.body.style.padding = "0";
     document.body.style.overflow = "hidden";
     document.body.style.backgroundColor = "#1e1e1e";
+    document.body.style.height = "100vh";
+    document.body.style.width = "100vw";
   }, []);
 
   // =========================================================================
@@ -74,13 +76,10 @@ function App() {
     };
   }, []);
 
-  // ENVIO INTELIGENTE (SEM FILA / SEM BUFFER BLOAT)
   const enviarComando = (novoComando: string) => {
     if (novoComando !== comandoRoboRef.current) {
       const agora = Date.now();
       
-      // Se não for "PARAR", espera pelo menos 1.5s entre comandos 
-      // para dar tempo do robô fazer a animação e não enfileirar ações.
       if (novoComando !== "PARAR" && agora - ultimoEnvioRef.current < 1500) {
         return; 
       }
@@ -145,7 +144,7 @@ function App() {
   };
 
   // =========================================================================
-  // 3. VISÃO COMPUTACIONAL (NOVA LÓGICA POR DISTÂNCIA E CONTAGEM)
+  // 3. VISÃO COMPUTACIONAL (LÓGICA GEOMÉTRICA DE GESTOS)
   // =========================================================================
   const getDist = (p1: any, p2: any) => Math.hypot(p1.x - p2.x, p1.y - p2.y);
 
@@ -175,26 +174,20 @@ function App() {
 
       const wrist = landmarks[0];
       
-      // Verifica se o dedo está esticado comparando a distância da ponta até o pulso 
-      // com a distância da articulação do meio até o pulso. Funciona em qualquer ângulo!
       const isIndexUp  = getDist(wrist, landmarks[8])  > getDist(wrist, landmarks[6]) * 1.1;
       const isMiddleUp = getDist(wrist, landmarks[12]) > getDist(wrist, landmarks[10]) * 1.1;
       const isRingUp   = getDist(wrist, landmarks[16]) > getDist(wrist, landmarks[14]) * 1.1;
       const isPinkyUp  = getDist(wrist, landmarks[20]) > getDist(wrist, landmarks[18]) * 1.1;
 
-      // Polegar para fora? (Compara a base do mindinho)
       const isThumbOut = getDist(landmarks[4], landmarks[17]) > getDist(landmarks[2], landmarks[17]);
 
-      // Distâncias Especiais
       const distThumbIndex = getDist(landmarks[4], landmarks[8]);
-      const isOkSign = distThumbIndex < 0.05 && isMiddleUp && isRingUp && isPinkyUp; // Dedão e Ind. colados
+      const isOkSign = distThumbIndex < 0.05 && isMiddleUp && isRingUp && isPinkyUp; 
       
-      // Star Trek (Buraco entre dedo médio e anelar)
       const distMiddleRing = getDist(landmarks[12], landmarks[16]);
       const distIndexMiddle = getDist(landmarks[8], landmarks[12]);
       const isStarTrek = isIndexUp && isMiddleUp && isRingUp && isPinkyUp && (distMiddleRing > distIndexMiddle * 1.8);
 
-      // --- MAPEAMENTO EXATO DOS SINAIS ---
       if (isOkSign) {
         detectadoComando = "ALONGAR"; detectadoNome = "👌 OK (Alongar)";
       } 
@@ -226,12 +219,10 @@ function App() {
         detectadoComando = "FRENTE"; detectadoNome = "🖐️ Mão Aberta (Frente)";
       } 
       else {
-        // Ignora transições bizarras da mão e mantem parado/aguardando
         detectadoComando = "PARAR"; detectadoNome = "⏳ Lendo Mão...";
       }
     }
 
-    // DEBOUNCE (15 frames = A mão precisa estar parada na mesma pose por ~0.5s)
     if (detectadoComando === filtroGestoRef.current.comando) {
       filtroGestoRef.current.contagem++;
     } else {
@@ -294,12 +285,12 @@ function App() {
   }, [abaAtiva]);
 
   // =========================================================================
-  // INTERFACE - RESPONSIVA, FLEXBOX E SEM ROLAGEM
+  // INTERFACE 100% BLINDADA CONTRA SCROLL (100vh rígido)
   // =========================================================================
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', color: 'white', fontFamily: 'Arial' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', overflow: 'hidden', color: 'white', fontFamily: 'Arial' }}>
       
-      {/* HEADER FIXO */}
+      {/* HEADER FIXO NO TOPO */}
       <div style={{ padding: '10px 20px', textAlign: 'center', flexShrink: 0 }}>
         <h2 style={{ margin: '5px 0' }}>MiniBo Painel</h2>
         <p style={{ margin: '0 0 10px 0', fontSize: '14px' }}>Rede: <strong>{statusWs}</strong></p>
@@ -311,41 +302,39 @@ function App() {
         </div>
       </div>
 
-      {/* ÁREA DE CONTEÚDO (Ocupa o resto da tela, não rola) */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', position: 'relative', overflow: 'hidden' }}>
+      {/* ÁREA DE CONTEÚDO (Usa minHeight: 0 para nunca estourar o limite da tela) */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', position: 'relative', minHeight: 0, overflow: 'hidden' }}>
         
         {/* ================= ABA VOZ ================= */}
         {abaAtiva === 'voz' && (
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
-            <p style={{ color: '#aaa', textAlign: 'center' }}>Diga: Frente, Trás, Esquerda, Direita, Sentar, Deitar, Alongar, Dançar, Alegre, Parar</p>
-            <button onClick={alternarMicrofone} style={{ padding: '20px 40px', fontSize: '20px', color: 'white', border: 'none', borderRadius: '10px', cursor: 'pointer', backgroundColor: ouvindoVoz ? '#dc3545' : '#28a745', marginBottom: '20px' }}>
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '20px', minHeight: 0, overflowY: 'auto' }}>
+            <p style={{ color: '#aaa', textAlign: 'center', margin: '0 0 10px 0' }}>Diga: Frente, Trás, Esquerda, Direita, Sentar, Deitar, Alongar, Dançar, Alegre, Parar</p>
+            <button onClick={alternarMicrofone} style={{ padding: '15px 30px', fontSize: '18px', color: 'white', border: 'none', borderRadius: '10px', cursor: 'pointer', backgroundColor: ouvindoVoz ? '#dc3545' : '#28a745', marginBottom: '15px' }}>
               {ouvindoVoz ? '🛑 Parar Ouvinte' : '🎙️ Ativar Ouvinte'}
             </button>
-            <p style={{ color: '#ffc107', fontStyle: 'italic', height: '30px' }}>{ouvindoVoz ? `"${fraseOuvida}"` : ''}</p>
+            <p style={{ color: '#ffc107', fontStyle: 'italic', height: '25px', margin: '0 0 15px 0' }}>{ouvindoVoz ? `"${fraseOuvida}"` : ''}</p>
             <div style={{ padding: '20px', backgroundColor: '#333', borderRadius: '10px', minWidth: '250px', textAlign: 'center' }}>
               <p style={{ margin: 0, color: '#aaa' }}>Executando:</p>
-              <p style={{ margin: '10px 0 0 0', fontSize: '30px', fontWeight: 'bold', color: comandoAtualVoz === 'PARAR' ? '#dc3545' : '#17a2b8' }}>{comandoAtualVoz}</p>
+              <p style={{ margin: '10px 0 0 0', fontSize: '28px', fontWeight: 'bold', color: comandoAtualVoz === 'PARAR' ? '#dc3545' : '#17a2b8' }}>{comandoAtualVoz}</p>
             </div>
           </div>
         )}
 
         {/* ================= ABA VISÃO ================= */}
         {abaAtiva === 'visao' && (
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
             
-            {/* Controles da Visão */}
             <div style={{ padding: '10px', textAlign: 'center', flexShrink: 0 }}>
               <button onClick={cameraLigada ? desligarVision : iniciarVision} style={{ padding: '10px 20px', fontSize: '14px', backgroundColor: cameraLigada ? '#dc3545' : '#28a745', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>
-                {cameraLigada ? '❌ Desligar Câmera' : '🤖 Ligar Câmera'}
+                {cameraLigada ? '❌ Desligar Câmera' : '🤖 Ligar Câmera IA'}
               </button>
             </div>
 
-            {/* Container do Vídeo (Preenche o resto da tela, ajusta aspect-ratio) */}
-            <div style={{ flex: 1, position: 'relative', backgroundColor: '#000' }}>
-              <video ref={videoRef} playsInline muted style={{ width: '100%', height: '100%', objectFit: 'contain', transform: 'scaleX(-1)' }} />
-              <canvas ref={canvasRef} style={{ width: '100%', height: '100%', objectFit: 'contain', position: 'absolute', top: 0, left: 0, transform: 'scaleX(-1)' }} />
+            {/* O Container de Vídeo agora é forçado a ficar dentro do espaço disponível */}
+            <div style={{ flex: 1, position: 'relative', backgroundColor: '#000', minHeight: 0, overflow: 'hidden' }}>
+              <video ref={videoRef} playsInline muted style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain', transform: 'scaleX(-1)' }} />
+              <canvas ref={canvasRef} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain', transform: 'scaleX(-1)' }} />
               
-              {/* LEGENDA FLUTUANTE (No topo esquerdo, não empurra nada) */}
               {cameraLigada && (
                 <div style={{ position: 'absolute', top: '15px', left: '15px', backgroundColor: 'rgba(0,0,0,0.7)', padding: '10px 15px', borderRadius: '8px', zIndex: 20 }}>
                   <p style={{ margin: 0, fontSize: '12px', color: '#aaa' }}>Gesto:</p>
@@ -360,8 +349,8 @@ function App() {
 
         {/* ================= ABA MANUAL ================= */}
         {abaAtiva === 'manual' && (
-           <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-             <p style={{ color: '#ffcc00' }}>⚠️ Desativado enquanto focamos na IA.</p>
+           <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 0 }}>
+             <p style={{ color: '#ffcc00' }}>⚠️ Desativado temporariamente.</p>
            </div>
         )}
 
