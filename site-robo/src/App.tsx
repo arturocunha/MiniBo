@@ -19,8 +19,7 @@ function App() {
   // ==================== ESTADOS DA VISÃO ====================
   const [cameraLigada, setCameraLigada] = useState(false); 
   const [comandoAtualVisao, setComandoAtualVisao] = useState('PARAR');
-  const [gestoNome, setGestoNome] = useState('Nenhum');
-  const [progressoIA, setProgressoIA] = useState(0); // Controle da barrinha verde (0 a 100)
+  const [progressoIA, setProgressoIA] = useState(0); 
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -172,23 +171,19 @@ function App() {
 
       const wrist = landmarks[0];
       
-      // Precisão 2.0: Distância da ponta (8) até o pulso deve ser 20% maior que a junta da base (5)
       const isIndexUp  = getDist(wrist, landmarks[8])  > getDist(wrist, landmarks[5]) * 1.2;
       const isMiddleUp = getDist(wrist, landmarks[12]) > getDist(wrist, landmarks[9]) * 1.2;
       const isRingUp   = getDist(wrist, landmarks[16]) > getDist(wrist, landmarks[13]) * 1.2;
       const isPinkyUp  = getDist(wrist, landmarks[20]) > getDist(wrist, landmarks[17]) * 1.2;
 
-      // O polegar está para fora da palma? (Compara a base do mindinho)
       const isThumbOut = getDist(landmarks[4], landmarks[17]) > getDist(landmarks[5], landmarks[17]) * 1.2;
 
-      // Sinais compostos
       const isOkSign = getDist(landmarks[4], landmarks[8]) < getDist(landmarks[5], landmarks[9]); 
       
       const distMiddleRing = getDist(landmarks[12], landmarks[16]);
       const distIndexMiddle = getDist(landmarks[8], landmarks[12]);
       const isStarTrek = isIndexUp && isMiddleUp && isRingUp && isPinkyUp && (distMiddleRing > distIndexMiddle * 1.5);
 
-      // Hierarquia Exata
       if (isOkSign && isMiddleUp && isRingUp && isPinkyUp) {
         detectadoComando = "ALONGAR"; detectadoNome = "👌 OK (Alongar)";
       } 
@@ -224,31 +219,23 @@ function App() {
       }
     }
 
-    // =====================================================================
-    // SISTEMA DE VALIDAÇÃO TEMPORAL DE 1.5s (Com tolerância Anti-Flicker)
-    // =====================================================================
     const now = Date.now();
     const filtro = filtroGestoRef.current;
 
     if (detectadoComando === filtro.comando) {
-      // Se a IA está vendo o mesmo gesto, atualiza a última vez visto
       filtro.ultimaVezVisto = now;
       
       const tempoSegurando = now - filtro.inicio;
       const progresso = Math.min(100, (tempoSegurando / 1500) * 100);
       setProgressoIA(progresso);
 
-      // Bateu 1.5 segundos na mesma pose? Executa!
       if (tempoSegurando >= 1500) {
-        setGestoNome(detectadoNome); // Atualiza texto principal
         if (comandoAtualVisao !== detectadoComando) {
           setComandoAtualVisao(detectadoComando);
           enviarComando(detectadoComando);
         }
       }
     } else {
-      // Se a pose mudou, só consideramos uma "mudança real" se durar mais que 300ms.
-      // Isso impede que um "piscar" da câmera lendo a mão errada ressuscite o timer.
       if (now - filtro.ultimaVezVisto > 300) {
         filtroGestoRef.current = {
           comando: detectadoComando,
@@ -256,10 +243,10 @@ function App() {
           inicio: now,
           ultimaVezVisto: now
         };
-        setProgressoIA(0); // Zera a barra
+        setProgressoIA(0); 
       }
     }
-  }, [comandoAtualVisao]); // Dependência atualizada
+  }, [comandoAtualVisao]); 
 
   const processarFrameRef = useRef<() => void>(() => {});
   processarFrameRef.current = async () => {
@@ -298,7 +285,7 @@ function App() {
     visaoAtivaRef.current = false; cancelAnimationFrame(loopVisaoRef.current); 
     if (streamRef.current) streamRef.current.getTracks().forEach(track => track.stop());
     if (videoRef.current) videoRef.current.srcObject = null;
-    setCameraLigada(false); setComandoAtualVisao('PARAR'); setGestoNome('Nenhum'); setProgressoIA(0); enviarComando("PARAR");
+    setCameraLigada(false); setComandoAtualVisao('PARAR'); setProgressoIA(0); enviarComando("PARAR");
   };
 
   useEffect(() => {
@@ -318,7 +305,6 @@ function App() {
       backgroundColor: '#1e1e1e', color: 'white', fontFamily: 'Arial', overflow: 'hidden' 
     }}>
       
-      {/* HEADER FIXO */}
       <div style={{ width: '100%', padding: '10px 0', textAlign: 'center', flexShrink: 0 }}>
         <h2 style={{ margin: '5px 0' }}>MiniBo Painel</h2>
         <p style={{ margin: '0 0 10px 0', fontSize: '14px' }}>Rede: <strong>{statusWs}</strong></p>
@@ -330,10 +316,8 @@ function App() {
         </div>
       </div>
 
-      {/* ÁREA DE CONTEÚDO */}
       <div style={{ flex: 1, width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', position: 'relative', minHeight: 0 }}>
         
-        {/* ================= ABA VOZ ================= */}
         {abaAtiva === 'voz' && (
           <div style={{ flex: 1, width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 0 }}>
             <p style={{ color: '#aaa', textAlign: 'center', margin: '0 0 10px 0' }}>Diga: Frente, Trás, Esquerda, Direita, Sentar, Deitar, Alongar, Dançar, Alegre, Parar</p>
@@ -348,7 +332,6 @@ function App() {
           </div>
         )}
 
-        {/* ================= ABA VISÃO ================= */}
         {abaAtiva === 'visao' && (
           <div style={{ flex: 1, width: '100%', maxWidth: '800px', display: 'flex', flexDirection: 'column', alignItems: 'center', minHeight: 0, paddingBottom: '20px' }}>
             
@@ -379,7 +362,6 @@ function App() {
                     </p>
                   </div>
                 </div>
-                {/* BARRA DE CARREGAMENTO (1.5s) */}
                 <div style={{ width: '100%', height: '4px', backgroundColor: '#444', borderRadius: '2px', marginTop: '10px', overflow: 'hidden' }}>
                   <div style={{ width: `${progressoIA}%`, height: '100%', backgroundColor: progressoIA === 100 ? '#17a2b8' : '#28a745', transition: 'width 0.1s linear' }}></div>
                 </div>
@@ -394,7 +376,6 @@ function App() {
           </div>
         )}
 
-        {/* ================= ABA MANUAL ================= */}
         {abaAtiva === 'manual' && (
            <div style={{ flex: 1, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 0 }}>
              <p style={{ color: '#ffcc00' }}>⚠️ Desativado temporariamente.</p>
