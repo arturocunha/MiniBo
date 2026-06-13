@@ -5,20 +5,18 @@ function App() {
   const [abaAtiva, setAbaAtiva] = useState<'voz' | 'visao' | 'manual'>('voz');
   const [statusWs, setStatusWs] = useState('A ligar...');
   
-  // Estados Globais
   const comandoRoboRef = useRef<string>("PARAR");
   const ultimoEnvioRef = useRef<number>(0);
 
-  // ==================== ESTADOS DA VOZ ====================
   const [comandoAtualVoz, setComandoAtualVoz] = useState('PARAR');
   const [ouvindoVoz, setOuvindoVoz] = useState(false);
   const [fraseOuvida, setFraseOuvida] = useState('');
   const recognitionRef = useRef<any>(null); 
   const ouvindoRef = useRef(false); 
 
-  // ==================== ESTADOS DA VISÃO ====================
   const [cameraLigada, setCameraLigada] = useState(false); 
   const [comandoAtualVisao, setComandoAtualVisao] = useState('PARAR');
+  const [gestoNome, setGestoNome] = useState('Nenhum');
   const [progressoIA, setProgressoIA] = useState(0); 
   
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -28,12 +26,10 @@ function App() {
   const loopVisaoRef = useRef<number>(0); 
   const visaoAtivaRef = useRef<boolean>(false);
   
-  // Filtro de Tempo Real e Anti-Flicker
   const filtroGestoRef = useRef({ comando: 'PARAR', nome: 'Nenhum', inicio: 0, ultimaVezVisto: 0 });
 
   const ws = useRef<WebSocket | null>(null);
 
-  // Trava a rolagem da tela globalmente
   useEffect(() => {
     document.body.style.margin = "0";
     document.body.style.padding = "0";
@@ -43,9 +39,6 @@ function App() {
     document.body.style.width = "100vw";
   }, []);
 
-  // =========================================================================
-  // 1. LIGAÇÃO WEBSOCKET (KEEP-ALIVE)
-  // =========================================================================
   useEffect(() => {
     const protocoloWs = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.hostname;
@@ -90,9 +83,6 @@ function App() {
     }
   };
 
-  // =========================================================================
-  // 2. COMANDO DE VOZ
-  // =========================================================================
   useEffect(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (SpeechRecognition) {
@@ -140,9 +130,6 @@ function App() {
     }
   };
 
-  // =========================================================================
-  // 3. VISÃO COMPUTACIONAL (LÓGICA MATEMÁTICA ESTREITA)
-  // =========================================================================
   const getDist = (p1: any, p2: any) => Math.hypot(p1.x - p2.x, p1.y - p2.y);
 
   const onResultsHand = useCallback((results: any) => {
@@ -175,48 +162,23 @@ function App() {
       const isMiddleUp = getDist(wrist, landmarks[12]) > getDist(wrist, landmarks[9]) * 1.2;
       const isRingUp   = getDist(wrist, landmarks[16]) > getDist(wrist, landmarks[13]) * 1.2;
       const isPinkyUp  = getDist(wrist, landmarks[20]) > getDist(wrist, landmarks[17]) * 1.2;
-
       const isThumbOut = getDist(landmarks[4], landmarks[17]) > getDist(landmarks[5], landmarks[17]) * 1.2;
-
       const isOkSign = getDist(landmarks[4], landmarks[8]) < getDist(landmarks[5], landmarks[9]); 
-      
       const distMiddleRing = getDist(landmarks[12], landmarks[16]);
       const distIndexMiddle = getDist(landmarks[8], landmarks[12]);
       const isStarTrek = isIndexUp && isMiddleUp && isRingUp && isPinkyUp && (distMiddleRing > distIndexMiddle * 1.5);
 
-      if (isOkSign && isMiddleUp && isRingUp && isPinkyUp) {
-        detectadoComando = "ALONGAR"; detectadoNome = "👌 OK (Alongar)";
-      } 
-      else if (isStarTrek) {
-        detectadoComando = "SENTAR"; detectadoNome = "🖖 Star Trek (Sentar)";
-      } 
-      else if (isIndexUp && !isMiddleUp && !isRingUp && isPinkyUp && !isThumbOut) {
-        detectadoComando = "DANCAR"; detectadoNome = "🤘 Rock (Dançar)";
-      } 
-      else if (!isIndexUp && !isMiddleUp && !isRingUp && isPinkyUp && isThumbOut) {
-        detectadoComando = "ALEGRE"; detectadoNome = "🤙 Hang Loose (Alegre)";
-      } 
-      else if (!isIndexUp && !isMiddleUp && !isRingUp && !isPinkyUp && !isThumbOut) {
-        detectadoComando = "PARAR"; detectadoNome = "✊ 0 Dedos (Parar)";
-      } 
-      else if (isIndexUp && !isMiddleUp && !isRingUp && !isPinkyUp && !isThumbOut) {
-        detectadoComando = "ESQUERDA"; detectadoNome = "☝️ 1 Dedo (Esquerda)";
-      } 
-      else if (isIndexUp && isMiddleUp && !isRingUp && !isPinkyUp && !isThumbOut) {
-        detectadoComando = "TRAS"; detectadoNome = "✌️ 2 Dedos (Trás)";
-      } 
-      else if (isIndexUp && isMiddleUp && isRingUp && !isPinkyUp && !isThumbOut) {
-        detectadoComando = "DIREITA"; detectadoNome = "3️⃣ 3 Dedos (Direita)";
-      } 
-      else if (isIndexUp && isMiddleUp && isRingUp && isPinkyUp && !isThumbOut) {
-        detectadoComando = "DEITAR"; detectadoNome = "✋ 4 Dedos (Deitar)";
-      } 
-      else if (isIndexUp && isMiddleUp && isRingUp && isPinkyUp && isThumbOut) {
-        detectadoComando = "FRENTE"; detectadoNome = "🖐️ Mão Aberta (Frente)";
-      } 
-      else {
-        detectadoComando = "PARAR"; detectadoNome = "⏳ Analisando...";
-      }
+      if (isOkSign && isMiddleUp && isRingUp && isPinkyUp) { detectadoComando = "ALONGAR"; detectadoNome = "👌 OK (Alongar)"; } 
+      else if (isStarTrek) { detectadoComando = "SENTAR"; detectadoNome = "🖖 Star Trek (Sentar)"; } 
+      else if (isIndexUp && !isMiddleUp && !isRingUp && isPinkyUp && !isThumbOut) { detectadoComando = "DANCAR"; detectadoNome = "🤘 Rock (Dançar)"; } 
+      else if (!isIndexUp && !isMiddleUp && !isRingUp && isPinkyUp && isThumbOut) { detectadoComando = "ALEGRE"; detectadoNome = "🤙 Hang Loose (Alegre)"; } 
+      else if (!isIndexUp && !isMiddleUp && !isRingUp && !isPinkyUp && !isThumbOut) { detectadoComando = "PARAR"; detectadoNome = "✊ 0 Dedos (Parar)"; } 
+      else if (isIndexUp && !isMiddleUp && !isRingUp && !isPinkyUp && !isThumbOut) { detectadoComando = "ESQUERDA"; detectadoNome = "☝️ 1 Dedo (Esquerda)"; } 
+      else if (isIndexUp && isMiddleUp && !isRingUp && !isPinkyUp && !isThumbOut) { detectadoComando = "TRAS"; detectadoNome = "✌️ 2 Dedos (Trás)"; } 
+      else if (isIndexUp && isMiddleUp && isRingUp && !isPinkyUp && !isThumbOut) { detectadoComando = "DIREITA"; detectadoNome = "3️⃣ 3 Dedos (Direita)"; } 
+      else if (isIndexUp && isMiddleUp && isRingUp && isPinkyUp && !isThumbOut) { detectadoComando = "DEITAR"; detectadoNome = "✋ 4 Dedos (Deitar)"; } 
+      else if (isIndexUp && isMiddleUp && isRingUp && isPinkyUp && isThumbOut) { detectadoComando = "FRENTE"; detectadoNome = "🖐️ Mão Aberta (Frente)"; } 
+      else { detectadoComando = "PARAR"; detectadoNome = "⏳ Analisando..."; }
     }
 
     const now = Date.now();
@@ -226,10 +188,14 @@ function App() {
       filtro.ultimaVezVisto = now;
       
       const tempoSegurando = now - filtro.inicio;
-      const progresso = Math.min(100, (tempoSegurando / 1500) * 100);
+      
+      // MÁGICA 1: Se for o sinal de PARAR, exige apenas 400ms. Os outros exigem 1500ms.
+      const tempoNecessario = detectadoComando === "PARAR" ? 400 : 1500;
+      
+      const progresso = Math.min(100, (tempoSegurando / tempoNecessario) * 100);
       setProgressoIA(progresso);
 
-      if (tempoSegurando >= 1500) {
+      if (tempoSegurando >= tempoNecessario) {
         if (comandoAtualVisao !== detectadoComando) {
           setComandoAtualVisao(detectadoComando);
           enviarComando(detectadoComando);
@@ -285,7 +251,7 @@ function App() {
     visaoAtivaRef.current = false; cancelAnimationFrame(loopVisaoRef.current); 
     if (streamRef.current) streamRef.current.getTracks().forEach(track => track.stop());
     if (videoRef.current) videoRef.current.srcObject = null;
-    setCameraLigada(false); setComandoAtualVisao('PARAR'); setProgressoIA(0); enviarComando("PARAR");
+    setCameraLigada(false); setComandoAtualVisao('PARAR'); setGestoNome('Nenhum'); setProgressoIA(0); enviarComando("PARAR");
   };
 
   useEffect(() => {
@@ -295,15 +261,8 @@ function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [abaAtiva]);
 
-  // =========================================================================
-  // INTERFACE
-  // =========================================================================
   return (
-    <div style={{ 
-      position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', 
-      display: 'flex', flexDirection: 'column', alignItems: 'center', 
-      backgroundColor: '#1e1e1e', color: 'white', fontFamily: 'Arial', overflow: 'hidden' 
-    }}>
+    <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', backgroundColor: '#1e1e1e', color: 'white', fontFamily: 'Arial', overflow: 'hidden' }}>
       
       <div style={{ width: '100%', padding: '10px 0', textAlign: 'center', flexShrink: 0 }}>
         <h2 style={{ margin: '5px 0' }}>MiniBo Painel</h2>
@@ -372,7 +331,6 @@ function App() {
               <video ref={videoRef} playsInline muted style={{ width: '100%', height: '100%', objectFit: 'contain', transform: 'scaleX(-1)' }} />
               <canvas ref={canvasRef} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain', transform: 'scaleX(-1)' }} />
             </div>
-
           </div>
         )}
 
